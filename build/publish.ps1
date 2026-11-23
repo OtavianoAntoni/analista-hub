@@ -3,7 +3,9 @@
 param(
     [string]$Configuration = 'Release',
     [string]$Out = 'dist\AnalistaHub',
-    [string]$Version = ''
+    [string]$Version = '',
+    # CI: os scripts das ferramentas não estão no repositório, então o gate só valida a estrutura
+    [switch]$SkipScripts
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,5 +74,7 @@ Write-Host "== pronto: $files arquivos, $totalMb MB em $outDir"
 Write-Host "== gate de catálogo (docs/REGRAS-DE-FERRAMENTA.md)"
 $gateScript = Join-Path $root 'build\check-tools.ps1'
 $gateExe = Join-Path $outDir 'AnalistaHub.exe'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $gateScript -Exe $gateExe
+$gateArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $gateScript, '-Exe', $gateExe)
+if ($SkipScripts) { $gateArgs += '-SkipScripts' }
+& powershell.exe @gateArgs
 if ($LASTEXITCODE -ne 0) { throw "gate de catálogo falhou — publicação bloqueada" }

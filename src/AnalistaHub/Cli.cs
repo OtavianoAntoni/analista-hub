@@ -57,6 +57,10 @@ public static class Cli
 
             case "--check-tools":
             {
+                // No CI os scripts das ferramentas não existem (ficam na máquina do analista, fora do
+                // repositório). --skip-scripts valida só a estrutura do catálogo: gatilhos, duplicidade,
+                // base local e campos de credencial.
+                var skipScripts = args.Contains("--skip-scripts");
                 var problems = new List<object>();
                 foreach (var tool in catalog.Tools)
                 {
@@ -75,7 +79,7 @@ public static class Cli
                         if (!tool.DatasetExists)
                             problems.Add(new { id = tool.Id, problema = "base não encontrada: " + tool.ExpandedDataset });
                     }
-                    else if (!tool.ScriptExists)
+                    else if (!skipScripts && !tool.ScriptExists)
                         problems.Add(new { id = tool.Id, problema = "script não encontrado: " + tool.ExpandedScript });
 
                     if (tool.Credentials is not null && tool.Credentials.Fields.Count == 0)

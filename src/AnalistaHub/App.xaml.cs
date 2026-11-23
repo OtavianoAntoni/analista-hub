@@ -41,6 +41,7 @@ public partial class App : Application
         SettingsService.Load();
 
         var cliArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
+        if (cliArgs.Contains("--skip-scripts")) ToolCatalog.IgnoreMissingScripts = true;
         if (Cli.IsCliInvocation(cliArgs))
         {
             // modo diagnóstico: roda sem janela e sai

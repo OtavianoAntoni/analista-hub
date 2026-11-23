@@ -18,6 +18,13 @@ public sealed class ToolCatalog
 
     public List<ToolManifest> Tools { get; } = new();
 
+    /// <summary>
+    /// Verdadeiro no CI (`--skip-scripts`): os scripts das ferramentas vivem na máquina do analista,
+    /// não no repositório. Sem isso todo manifesto viraria "com problema" no runner e o gate de
+    /// publicação bloquearia o build por um motivo que não existe lá.
+    /// </summary>
+    public static bool IgnoreMissingScripts { get; set; }
+
     public static ToolCatalog Load()
     {
         var catalog = new ToolCatalog();
@@ -69,7 +76,7 @@ public sealed class ToolCatalog
                 else if (!tool.DatasetExists) problems.Add($"base não encontrada: {tool.ExpandedDataset}");
             }
             else if (string.IsNullOrWhiteSpace(tool.Script)) problems.Add("sem \"script\"");
-            else if (!tool.ScriptExists) problems.Add($"script não encontrado: {tool.ExpandedScript}");
+            else if (!tool.ScriptExists && !IgnoreMissingScripts) problems.Add($"script não encontrado: {tool.ExpandedScript}");
             if (problems.Count > 0) tool.LoadError = string.Join("; ", problems);
             return tool;
         }

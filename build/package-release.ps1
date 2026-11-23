@@ -16,7 +16,8 @@ param(
     [string]$AssetName = '',
     [string]$BaseUrl = '',
     [string]$Notes = '',
-    [string]$Repo = 'OtavianoAntoni/analista-hub'
+    [string]$Repo = 'OtavianoAntoni/analista-hub',
+    [switch]$SkipScripts
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,8 +32,10 @@ $outDir = if ([System.IO.Path]::IsPathRooted($Out)) { $Out } else { Join-Path $r
 $installDir = if ([System.IO.Path]::IsPathRooted($InstallDir)) { $InstallDir } else { Join-Path $root $InstallDir }
 
 Write-Host "== publicando versão $version"
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'build\publish.ps1') `
-    -Version $version -Out $InstallDir
+$publishArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'build\publish.ps1'),
+    '-Version', $version, '-Out', $InstallDir)
+if ($SkipScripts) { $publishArgs += '-SkipScripts' }
+& powershell.exe @publishArgs
 if ($LASTEXITCODE -ne 0) { throw "publish falhou (exit $LASTEXITCODE)" }
 
 $exe = Join-Path $installDir 'AnalistaHub.exe'

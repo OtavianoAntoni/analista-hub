@@ -48,7 +48,9 @@ jobs:
 
       - name: Publicar e empacotar
         shell: pwsh
-        run: ./build/package-release.ps1 -Version ${{ steps.v.outputs.version }}
+        # -SkipScripts: os scripts das ferramentas (espanso) vivem na máquina do analista, não no
+        # repositório. No runner o gate valida só a estrutura do catálogo (gatilho, base, credencial).
+        run: ./build/package-release.ps1 -Version ${{ steps.v.outputs.version }} -SkipScripts
 
       - name: Conferir o pacote (mesma checagem que o app faz)
         shell: pwsh

@@ -1,7 +1,9 @@
 ﻿# Gate de catálogo: falha se alguma ferramenta quebrar as regras de docs/REGRAS-DE-FERRAMENTA.md
-# Uso: powershell -ExecutionPolicy Bypass -File build\check-tools.ps1 [-Exe <caminho do AnalistaHub.exe>]
+# Uso: powershell -ExecutionPolicy Bypass -File build\check-tools.ps1 [-Exe <caminho do AnalistaHub.exe>] [-SkipScripts]
+# -SkipScripts: ignora a existência dos scripts (CI não tem os scripts do analista). Só a estrutura.
 param(
-    [string]$Exe = ''
+    [string]$Exe = '',
+    [switch]$SkipScripts
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,7 +28,10 @@ Write-Host "== gate de catálogo: $Exe"
 # (com pipe/console anexado ele pode bloquear o processo chamador).
 $tmp = Join-Path $env:TEMP ('hub-check-' + [guid]::NewGuid().ToString('N') + '.json')
 
-$proc = Start-Process -FilePath $Exe -ArgumentList '--check-tools' -NoNewWindow -Wait -PassThru `
+$argList = @('--check-tools')
+if ($SkipScripts) { $argList += '--skip-scripts' }
+
+$proc = Start-Process -FilePath $Exe -ArgumentList $argList -NoNewWindow -Wait -PassThru `
     -RedirectStandardOutput $tmp -RedirectStandardError ($tmp + '.err')
 
 $output = ''
