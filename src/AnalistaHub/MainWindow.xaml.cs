@@ -34,6 +34,11 @@ public sealed partial class MainWindow : Window
         CenterOnScreen();
         UiKit.ApplyDarkChrome(this, round: false);
 
+        // Fechar no X destrói a janela nesta versão do WinAppSDK (AppWindow.Closing não é acionado
+        // nem cancelável). O app continua vivo pela janela oculta da bandeja, e qualquer ação de
+        // "abrir" recria a janela na hora — ver App.EnsureMainWindow.
+        Closed += (_, _) => AppPaths.Log("janela principal fechada — app segue na bandeja, abrir recria");
+
         RootGrid.RequestedTheme = App.Settings.Theme switch
         {
             "Claro" => ElementTheme.Light,
@@ -127,6 +132,19 @@ public sealed partial class MainWindow : Window
 
         if (target is null) return;
         NavList.SelectedItem = target;
+
+        // lembra onde o usuário estava: se ele fechar a janela no X, abrir de novo volta aqui
+        var marker = target.Kind switch
+        {
+            "home" => "home",
+            "settings" => "settings",
+            _ => target.ToolId ?? "home"
+        };
+        if (!string.Equals(App.Settings.LastPage, marker, StringComparison.OrdinalIgnoreCase))
+        {
+            App.Settings.LastPage = marker;
+            SettingsService.Save();
+        }
     }
 
     /// <summary>

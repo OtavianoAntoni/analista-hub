@@ -42,6 +42,8 @@ internal static class Native
     [DllImport("user32.dll")] public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
     [DllImport("user32.dll")] public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int index, IntPtr value);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+    [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
 
     public const uint MONITOR_DEFAULTTONEAREST = 2;
     public const int GWL_EXSTYLE = -20;
@@ -155,6 +157,8 @@ internal static class Native
 
     public const uint NIM_ADD = 0, NIM_MODIFY = 1, NIM_DELETE = 2;
     public const uint NIF_MESSAGE = 1, NIF_ICON = 2, NIF_TIP = 4;
+    public const int WM_CLOSE = 0x0010;
+    public const int SW_HIDE = 0;
     public const int WM_TRAYICON = 0x0400 + 1;
     public const int WM_LBUTTONUP = 0x0202;
     public const int WM_RBUTTONUP = 0x0205;

@@ -13,7 +13,10 @@ public partial class App : Application
     public static ToolCatalog Catalog { get; private set; } = new();
     public static MainWindow? MainWin { get; private set; }
     public static HotkeyService? Hotkey { get; private set; }
-    public static TrayIcon? Tray { get; private set; }
+    public static TrayIcon? Tray { get; set; }
+
+    /// <summary>Verdadeiro só quando o usuário manda sair pelo menu — aí o X não esconde, fecha.</summary>
+    public static bool ForcedExit { get; private set; }
 
     public App()
     {
@@ -116,6 +119,20 @@ public partial class App : Application
             validateTimer.Start();
         }
 
+        if (cliArgs.Contains("--close-window"))
+        {
+            // teste: fecha pelo mesmo caminho do X da barra de título (AppWindow.Close)
+            var closeTimer = MainWin.DispatcherQueue.CreateTimer();
+            closeTimer.Interval = TimeSpan.FromSeconds(2);
+            closeTimer.IsRepeating = false;
+            closeTimer.Tick += (_, _) =>
+            {
+                AppPaths.Log("teste: pedindo fechamento pelo caminho do X");
+                MainWin.Close();
+            };
+            closeTimer.Start();
+        }
+
         StartShowSignalWatcher();
     }
 
@@ -152,6 +169,8 @@ public partial class App : Application
 
     public static void ExitApp()
     {
+        ForcedExit = true;
+        AppPaths.Log("saindo pelo menu da bandeja");
         try { Tray?.Dispose(); } catch { }
         try { Hotkey?.Dispose(); } catch { }
         try { HudController.HideAll(); } catch { }
@@ -179,9 +198,11 @@ public partial class App : Application
 
     public static void ShowMainWindow()
     {
-        if (MainWin is null) return;
         try
         {
+            EnsureMainWindow();
+            if (MainWin is null) return;
+
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(MainWin);
             AppPaths.Log($"ShowMainWindow: hwnd={hwnd} visivel={MainWin.AppWindow.IsVisible}");
             MainWin.AppWindow.Show();
@@ -191,6 +212,46 @@ public partial class App : Application
             AppPaths.Log($"ShowMainWindow: fg={Native.GetForegroundWindow()} ok={Native.GetForegroundWindow() == hwnd}");
         }
         catch (Exception ex) { AppPaths.Log("ShowMainWindow: " + ex); }
+    }
+
+    /// <summary>
+    /// A janela principal pode ter sido destruída (fechada no X numa versão anterior, ou por falha
+    /// do WinUI). Se o HWND não existe mais, cria outra — senão "abrir" não faz nada e o app fica
+    /// vivo só na bandeja, sem janela nenhuma. O atalho global é re-registrado na janela nova.
+    /// </summary>
+    private static void EnsureMainWindow()
+    {
+        var alive = false;
+        if (MainWin is not null)
+        {
+            try
+            {
+                var h = WinRT.Interop.WindowNative.GetWindowHandle(MainWin);
+                alive = h != IntPtr.Zero && Native.IsWindow(h);
+            }
+            catch { alive = false; }
+        }
+
+        if (alive) return;
+
+        AppPaths.Log("janela principal não existe mais — recriando");
+        MainWin = new MainWindow();
+
+        // volta para a tela onde o usuário estava quando fechou a janela
+        if (!string.IsNullOrWhiteSpace(Settings.LastPage))
+        {
+            try { MainWin.NavigateTo(Settings.LastPage); } catch { }
+        }
+
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(MainWin);
+        try { Hotkey?.Dispose(); } catch { }
+        Hotkey = new HotkeyService(hwnd);
+        Hotkey.Pressed += () => HudController.Toggle();
+        if (!Hotkey.Register(Settings.Hotkey, out var error))
+        {
+            AppPaths.Log("atalho após recriar janela: " + error);
+            MainWin.SetHotkeyWarning(error);
+        }
     }
 
     /// <summary>Reescreve o atalho global (usado pela tela de configurações).</summary>

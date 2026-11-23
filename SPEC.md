@@ -159,6 +159,24 @@ O estado de autenticação vem da última validação feita pelo usuário (ou da
 falhou no login), guardado em `settings.json` — não há uma segunda bolinha para "login".
 A regra completa está em `docs/REGRAS-DE-FERRAMENTA.md` (R5).
 
+### 5.3 Fechar a janela (X) e reabrir
+
+Nesta versão do WinAppSDK, fechar a janela principal no **X** a **destrói** e o evento
+`AppWindow.Closing` não é acionável/cancelável (testado também com `SetWindowSubclass` no
+`WM_CLOSE`: o WinUI troca o procedimento da janela depois e o subclass é ignorado).
+
+Comportamento assumido, então:
+
+1. O **X** fecha a janela normalmente; o processo continua vivo pela janela oculta do ícone
+   (é um app de bandeja), sem janela nenhuma na tela.
+2. Qualquer ação de **abrir** — item do menu do ícone, **Configurações**, atalho global, ou abrir o
+   executável de novo — passa por `App.ShowMainWindow`, que **recria a janela** quando o HWND não
+   existe mais, re-registra o atalho global na janela nova e volta para a **última página** usada.
+3. **Sair de verdade** é só pelo menu do ícone → *Fechar aplicativo* (aí sim encerra o processo).
+
+Regressão que isso corrige: antes, depois do X, `ShowMainWindow` estourava
+`NullReferenceException` e o app ficava inacessível, vivo só na bandeja.
+
 ---
 
 ## 6. Serviços do HUB
