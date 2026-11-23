@@ -39,13 +39,36 @@ O `publish.ps1` copia os recursos XAML compilados (`.xbf`/`.pri`) que o `dotnet 
 src/AnalistaHub/            aplicação (C# + XAML)
   Models/ToolManifest.cs    contrato do manifesto de ferramenta
   Services/                 catálogo, executor, credenciais, hotkey, bandeja, diagnóstico
-  Views/                    HUD de comando e aviso de resultado
+  Views/                    HUD de comando, painel da Consulta SSE e aviso de resultado
   tools/*.json              manifestos embutidos
+  data/*.json               bases locais das ferramentas do tipo "dataset"
 build/publish.ps1           gera dist/AnalistaHub (self-contained, enxuga idiomas)
 launcher/                   .cmd de duplo clique (copiado para o dist)
+docs/FERRAMENTA-CONSULTA-SSE.md  spec da ferramenta de consulta de cidades
 SPEC.md                     comportamento especificado (fonte de verdade do produto)
 ENTREGA.md                  passagem para a sessão que empacota/instala
 ```
+
+## Ferramenta de base local (`kind: "dataset"`)
+
+Além das ferramentas que chamam um script, o HUB aceita uma ferramenta que **só consulta uma base
+local** — sem processo, sem rede, sem credencial. Exemplo: **Consulta SSE** (`:sse`), que devolve
+Sigla Anatel + NM + OLT + VPN de uma cidade. Ela abre um painel próprio (mesmo visual e mesmas
+teclas do HUD: digitar → `↑↓` → `Enter` copia → `Esc` fecha), porque a consulta tem um passo de
+escolha entre vários resultados.
+
+```json
+{
+  "id": "consulta-sse",
+  "name": "Consulta SSE",
+  "kind": "dataset",
+  "dataset": "data/sse-cidades.json",
+  "trigger": ":sse"
+}
+```
+
+O arquivo da base é procurado primeiro em `%LOCALAPPDATA%\AnalistaHub\` (atualização sem reinstalar)
+e depois em `data\` ao lado do executável. Detalhes em `docs/FERRAMENTA-CONSULTA-SSE.md`.
 
 ## Adicionar uma ferramenta (sem recompilar)
 

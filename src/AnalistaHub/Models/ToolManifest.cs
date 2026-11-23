@@ -91,6 +91,10 @@ public sealed class ToolManifest
     public string Trigger { get; set; } = "";
     /// <summary>Glifo Segoe MDL2 Assets, ex.: "\uE968".</summary>
     public string Icon { get; set; } = "\uE8A7";
+    /// <summary>script (executa um programa) | dataset (consulta uma base local, sem processo).</summary>
+    public string Kind { get; set; } = "script";
+    /// <summary>Base local da ferramenta do tipo dataset, relativa à pasta do app ou absoluta.</summary>
+    public string Dataset { get; set; } = "";
     public string Script { get; set; } = "";
     /// <summary>powershell | pwsh | python | direct</summary>
     public string Interpreter { get; set; } = "powershell";
@@ -128,6 +132,21 @@ public sealed class ToolManifest
 
     [JsonIgnore]
     public bool ScriptExists => !string.IsNullOrWhiteSpace(ExpandedScript) && System.IO.File.Exists(ExpandedScript);
+
+    /// <summary>Ferramenta que consulta uma base local: não executa processo nenhum.</summary>
+    [JsonIgnore]
+    public bool IsDataset => string.Equals(Kind, "dataset", StringComparison.OrdinalIgnoreCase);
+
+    [JsonIgnore]
+    public string ExpandedDataset =>
+        string.IsNullOrWhiteSpace(Dataset)
+            ? ""
+            : Path.IsPathRooted(Dataset)
+                ? Dataset
+                : Path.Combine(AppContext.BaseDirectory, Dataset.Replace('/', '\\'));
+
+    [JsonIgnore]
+    public bool DatasetExists => !string.IsNullOrWhiteSpace(ExpandedDataset) && System.IO.File.Exists(ExpandedDataset);
 
     [JsonIgnore] public string IconGlyph => string.IsNullOrEmpty(Icon) ? "\uE8A7" : Icon;
 }

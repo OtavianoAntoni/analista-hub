@@ -63,7 +63,12 @@ public sealed class ToolCatalog
             var problems = new List<string>();
             if (string.IsNullOrWhiteSpace(tool.Id)) problems.Add("sem \"id\"");
             if (string.IsNullOrWhiteSpace(tool.Name)) problems.Add("sem \"name\"");
-            if (string.IsNullOrWhiteSpace(tool.Script)) problems.Add("sem \"script\"");
+            if (tool.IsDataset)
+            {
+                if (string.IsNullOrWhiteSpace(tool.Dataset)) problems.Add("tipo dataset sem \"dataset\"");
+                else if (!tool.DatasetExists) problems.Add($"base não encontrada: {tool.ExpandedDataset}");
+            }
+            else if (string.IsNullOrWhiteSpace(tool.Script)) problems.Add("sem \"script\"");
             else if (!tool.ScriptExists) problems.Add($"script não encontrado: {tool.ExpandedScript}");
             if (problems.Count > 0) tool.LoadError = string.Join("; ", problems);
             return tool;

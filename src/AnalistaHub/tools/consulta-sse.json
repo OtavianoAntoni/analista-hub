@@ -1,0 +1,19 @@
+{
+  "id": "consulta-sse",
+  "name": "Consulta SSE",
+  "category": "SSE",
+  "kind": "dataset",
+  "dataset": "data/sse-cidades.json",
+  "description": "Sigla Anatel, NM, OLT e VPN de uma cidade do SSE.",
+  "longDescription": "Consulta a base local do SSE por cidade e devolve a Sigla Anatel com as redes daquela cidade: NM (NMS), OLT (modelo da OLT) e VPN por onde se chega aos NMEs. Uma cidade pode ter mais de uma rede — todas aparecem juntas. Funciona sem rede, sem VPN e sem credencial: os dados são um arquivo local, carregado uma vez na abertura do aplicativo.",
+  "trigger": ":sse",
+  "icon": "\uE774",
+  "inputs": [],
+  "output": {
+    "default": "clipboard",
+    "allowed": [ "clipboard" ],
+    "valueLabel": "Sigla Anatel + NM + OLT + VPN da cidade"
+  },
+  "examples": [ "taguatinga", "sao sebastiao", "mg" ],
+  "notes": "Base gerada por build_sse.py a partir das planilhas CONSULTA SSE. Para atualizar os dados, regenere o JSON e copie para %LOCALAPPDATA%/AnalistaHub/sse-cidades.json — não precisa reinstalar o Hub."
+}

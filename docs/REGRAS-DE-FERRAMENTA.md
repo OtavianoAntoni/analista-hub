@@ -40,7 +40,9 @@ regra do Windows (precisa de modificador). Nenhuma das duas capturas fica "solta
 ## R3 — Ferramenta nova: checklist obrigatório
 
 1. Manifesto `.json` em `src/AnalistaHub/tools/` (ou em `%LOCALAPPDATA%\AnalistaHub\tools\`).
-2. `id`, `name`, `description`, `script`, `trigger` preenchidos.
+2. `id`, `name`, `description`, `trigger` preenchidos e **ou** `script` (ferramenta que executa
+   programa) **ou** `kind: "dataset"` + `dataset` (ferramenta que consulta uma base local, sem
+   processo e sem rede — o painel é próprio, ver `docs/FERRAMENTA-CONSULTA-SSE.md`).
 3. Gatilho cumprindo R1 — o gate barra duplicado e formato inválido.
 4. Saída declarada (`output.valueLabel`) dizendo **o que** é copiado.
 5. Se o script pede credencial: `credentials.fields` com `env` (nunca argumento de linha de

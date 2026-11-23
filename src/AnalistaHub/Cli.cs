@@ -66,7 +66,12 @@ public static class Cli
                     var triggerError = TriggerPolicy.Validate(trigger, catalog, tool.Id);
                     if (triggerError is not null) problems.Add(new { id = tool.Id, problema = "gatilho: " + triggerError });
 
-                    if (!tool.ScriptExists)
+                    if (tool.IsDataset)
+                    {
+                        if (!tool.DatasetExists)
+                            problems.Add(new { id = tool.Id, problema = "base não encontrada: " + tool.ExpandedDataset });
+                    }
+                    else if (!tool.ScriptExists)
                         problems.Add(new { id = tool.Id, problema = "script não encontrado: " + tool.ExpandedScript });
 
                     if (tool.Credentials is not null && tool.Credentials.Fields.Count == 0)
@@ -154,10 +159,13 @@ public static class Cli
                 {
                     id = t.Id,
                     nome = t.Name,
+                    tipo = t.IsDataset ? "dataset" : "script",
                     gatilho = SettingsService.TriggerFor(t),
                     estado = t.IsBroken ? "com problema: " + t.LoadError : "ok",
-                    script = t.ExpandedScript,
-                    script_existe = t.ScriptExists,
+                    script = t.IsDataset ? null : t.ExpandedScript,
+                    script_existe = t.IsDataset ? (bool?)null : t.ScriptExists,
+                    base_local = t.IsDataset ? t.ExpandedDataset : null,
+                    base_existe = t.IsDataset ? t.DatasetExists : (bool?)null,
                     entradas = t.Inputs.Select(i => new { chave = i.Key, rotulo = i.Label, tipo = i.Type, usa_clipboard = i.EmptyUsesClipboard }),
                     saida_padrao = t.Output.Default,
                     credenciais = t.Credentials is null ? null : new
@@ -194,6 +202,50 @@ public static class Cli
                 var tool = catalog.Find(args.ElementAtOrDefault(1) ?? "");
                 if (tool is null) return Fail(output, "ferramenta não encontrada");
                 var value = args.ElementAtOrDefault(2) ?? "";
+
+                // ferramenta de base local: consulta em memória, sem processo nem rede
+                if (tool.IsDataset)
+                {
+                    var started = System.Diagnostics.Stopwatch.StartNew();
+                    var sse = SseCatalog.Current;
+                    var matches = sse.Search(value);
+                    started.Stop();
+
+                    var top = matches.FirstOrDefault();
+                    var formatted = top is null ? "" : SseCatalog.Format(top);
+                    output.AppendLine(Json(new
+                    {
+                        ok = sse.Loaded && matches.Count > 0,
+                        ferramenta = tool.Id,
+                        tipo = "dataset",
+                        base_local = sse.DataPath,
+                        cidades_na_base = sse.Cities.Count,
+                        linhas = sse.TotalLines,
+                        gerado_em = sse.Generated,
+                        entrada = value,
+                        encontrados = matches.Count,
+                        resultados = matches.Take(20).Select(c => new
+                        {
+                            cidade = c.Name,
+                            uf = c.Uf,
+                            sigla_anatel = c.Sigla,
+                            redes = c.Rows.Select(r => new { nm = r.Nm, olt = r.Olt, vpn = r.Vpn })
+                        }),
+                        valor = formatted,
+                        milissegundos = Math.Round(started.Elapsed.TotalMilliseconds, 3),
+                        erro = sse.Error
+                    }, true));
+
+                    if (top is not null && args.Contains("--copy"))
+                    {
+                        ClipboardService.SetText(formatted);
+                        HistoryStore.Append(new HistoryEntry(DateTime.Now, tool.Id, tool.Name,
+                            top.Name + " (" + top.Uf + ")", true, started.Elapsed.TotalSeconds, formatted));
+                    }
+
+                    Write(output.ToString());
+                    return sse.Loaded && top is not null ? 0 : 1;
+                }
 
                 var inputs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 var first = tool.Inputs.FirstOrDefault();

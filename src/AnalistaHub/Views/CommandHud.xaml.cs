@@ -273,6 +273,14 @@ public sealed partial class CommandHud : Window
 
     private async Task InvokeToolAsync(ToolManifest tool)
     {
+        // ferramenta de base local: não executa processo, abre o painel de consulta
+        if (tool.IsDataset)
+        {
+            HideHud();
+            SsePanelController.Open();
+            return;
+        }
+
         if (tool.Inputs.Count == 0)
         {
             await ExecuteAsync(tool);

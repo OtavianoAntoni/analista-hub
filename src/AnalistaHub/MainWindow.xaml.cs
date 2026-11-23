@@ -332,6 +332,12 @@ public sealed partial class MainWindow : Window
 
     private async Task RunFromDashboardAsync(ToolManifest tool)
     {
+        if (tool.IsDataset)
+        {
+            SsePanelController.Open();
+            return;
+        }
+
         var inputs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var clip = ClipboardService.GetText();
         foreach (var field in tool.Inputs)
@@ -408,14 +414,47 @@ public sealed partial class MainWindow : Window
         how.Children.Add(KeyValue("Busca / atalho", $"{App.Settings.Hotkey} → digite o nome ou o gatilho → Enter"));
         how.Children.Add(KeyValue("Exemplo", tool.Examples.Count > 0 ? string.Join("   ·   ", tool.Examples) : "—"));
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
-        var openHud = new Button { Content = "Abrir no comando", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
-        openHud.Click += (_, _) => HudController.ShowTool(tool.Id);
-        actions.Children.Add(openHud);
-        var testNow = new Button { Content = "Testar agora (usa o clipboard)" };
-        testNow.Click += async (_, _) => await RunFromDashboardAsync(tool);
-        actions.Children.Add(testNow);
+        if (tool.IsDataset)
+        {
+            var openData = new Button
+            {
+                Content = "Abrir consulta",
+                Style = (Style)Application.Current.Resources["AccentButtonStyle"]
+            };
+            openData.Click += (_, _) => SsePanelController.Open();
+            actions.Children.Add(openData);
+
+            var openHudData = new Button { Content = "Abrir no comando" };
+            openHudData.Click += (_, _) => HudController.ShowTool(tool.Id);
+            actions.Children.Add(openHudData);
+        }
+        else
+        {
+            var openHud = new Button { Content = "Abrir no comando", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+            openHud.Click += (_, _) => HudController.ShowTool(tool.Id);
+            actions.Children.Add(openHud);
+            var testNow = new Button { Content = "Testar agora (usa o clipboard)" };
+            testNow.Click += async (_, _) => await RunFromDashboardAsync(tool);
+            actions.Children.Add(testNow);
+        }
         how.Children.Add(actions);
         AddBlock("Como executar", how);
+
+        // base local: transparência de onde vêm os dados e como atualizar
+        if (tool.IsDataset)
+        {
+            var catalog = SseCatalog.Current;
+            var data = new StackPanel { Spacing = 8 };
+            data.Children.Add(KeyValue("Arquivo", catalog.DataPath));
+            data.Children.Add(KeyValue("Conteúdo", catalog.Loaded
+                ? $"{catalog.Cities.Count} cidades · {catalog.TotalLines} linhas NM/OLT/VPN · base de {catalog.Generated}"
+                : catalog.Error ?? "base não carregada"));
+            if (catalog.Sources.Count > 0)
+                data.Children.Add(KeyValue("Origem", string.Join("   ·   ", catalog.Sources.Select(s => s.File))));
+            data.Children.Add(Muted("Nada é consultado na rede: os dados ficam neste arquivo. Para atualizar, regenere a base " +
+                                    "com build_sse.py e copie o JSON para a pasta de dados do Hub."));
+            AddBlock("Base de dados", data);
+        }
 
         // 3 — configurações e credenciais
         var requirements = new StackPanel { Spacing = 12 };

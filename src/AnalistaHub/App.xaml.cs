@@ -90,6 +90,20 @@ public partial class App : Application
         if (pageIndex >= 0 && pageIndex + 1 < cliArgs.Length)
             MainWin.NavigateTo(cliArgs[pageIndex + 1]);
 
+        // usado em teste e por atalho direto: abre a Consulta SSE já com um termo digitado
+        var sseIndex = Array.IndexOf(cliArgs, "--sse");
+        if (sseIndex >= 0)
+        {
+            var term = sseIndex + 1 < cliArgs.Length && !cliArgs[sseIndex + 1].StartsWith("--")
+                ? cliArgs[sseIndex + 1]
+                : null;
+            var sseTimer = MainWin.DispatcherQueue.CreateTimer();
+            sseTimer.Interval = TimeSpan.FromMilliseconds(700);
+            sseTimer.IsRepeating = false;
+            sseTimer.Tick += (_, _) => SsePanelController.Open(term);
+            sseTimer.Start();
+        }
+
         if (cliArgs.Contains("--arm-hotkey"))
             MainWin.ArmHotkeyCapture();
 
@@ -141,6 +155,7 @@ public partial class App : Application
         try { Tray?.Dispose(); } catch { }
         try { Hotkey?.Dispose(); } catch { }
         try { HudController.HideAll(); } catch { }
+        try { SsePanelController.HideAll(); } catch { }
         Application.Current.Exit();
     }
 

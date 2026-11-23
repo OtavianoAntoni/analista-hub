@@ -37,8 +37,13 @@ Atalhos de Analista/
   src/AnalistaHub/         código-fonte
   launcher/                lançadores .cmd de duplo-clique (copiados para o dist)
   build/publish.ps1        gera dist/AnalistaHub
-  dist/AnalistaHub/        pacote pronto  (AnalistaHub.exe + Analista Hub.cmd + tools/)
+  dist/AnalistaHub/        pacote pronto  (AnalistaHub.exe + Analista Hub.cmd + tools/ + data/)
 ```
+
+Ferramenta **Consulta SSE** (`:sse`): a base vai embutida em `dist\AnalistaHub\data\sse-cidades.json`
+(23 KB, 161 cidades). Nada é consultado na rede. Para atualizar os dados **sem reinstalar**, o
+instalador (ou o analista) copia o novo `sse-cidades.json` para `%LOCALAPPDATA%\AnalistaHub\` — esse
+caminho tem precedência sobre o embutido. Spec: `docs/FERRAMENTA-CONSULTA-SSE.md`.
 
 Saída de dados do app (nunca dentro da pasta do programa):
 
