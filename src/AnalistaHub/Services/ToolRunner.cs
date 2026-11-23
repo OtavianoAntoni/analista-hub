@@ -94,6 +94,8 @@ public static class ToolRunner
             }
 
             var detail = DescribeLegacyFailure(tool, raw, err, process.ExitCode);
+            if (detail.StartsWith("Usuário ou senha recusados", StringComparison.Ordinal))
+                CredentialValidator.MarkRefused(tool.Id, detail);
             return new RunResult(false, "", detail, raw, err, process.ExitCode, sw.Elapsed, false);
         }
         catch (Exception ex)

@@ -19,7 +19,7 @@ public static class Cli
 
     public static bool IsCliInvocation(string[] args) =>
         args.Length > 0 && args[0] is "--list-tools" or "--test" or "--probe" or "--version" or "--help"
-            or "--set-cred" or "--clear-cred" or "--set-trigger";
+            or "--set-cred" or "--clear-cred" or "--set-trigger" or "--validate-cred" or "--check-tools";
 
     public static int Run(string[] args, ToolCatalog catalog)
     {
@@ -47,7 +47,60 @@ public static class Cli
                 output.AppendLine("  AnalistaHub.exe --probe <id>        testa serviço e credenciais da ferramenta");
                 output.AppendLine("  AnalistaHub.exe --set-cred <id> <campo>   grava credencial lida do STDIN");
                 output.AppendLine("  AnalistaHub.exe --clear-cred <id>   apaga as credenciais guardadas da ferramenta");
+                output.AppendLine("  AnalistaHub.exe --validate-cred <id> confirma as credenciais no serviço");
+                output.AppendLine("  AnalistaHub.exe --check-tools       valida o catálogo (gatilho, script, campos)");
                 break;
+
+            case "--check-tools":
+            {
+                var problems = new List<object>();
+                foreach (var tool in catalog.Tools)
+                {
+                    if (tool.IsBroken)
+                    {
+                        problems.Add(new { id = tool.Id, problema = "manifesto: " + tool.LoadError });
+                        continue;
+                    }
+
+                    var trigger = SettingsService.TriggerFor(tool);
+                    var triggerError = TriggerPolicy.Validate(trigger, catalog, tool.Id);
+                    if (triggerError is not null) problems.Add(new { id = tool.Id, problema = "gatilho: " + triggerError });
+
+                    if (!tool.ScriptExists)
+                        problems.Add(new { id = tool.Id, problema = "script não encontrado: " + tool.ExpandedScript });
+
+                    if (tool.Credentials is not null && tool.Credentials.Fields.Count == 0)
+                        problems.Add(new { id = tool.Id, problema = "credenciais declaradas sem campos" });
+                }
+
+                output.AppendLine(Json(new
+                {
+                    ok = problems.Count == 0,
+                    ferramentas = catalog.Tools.Count,
+                    problemas = problems
+                }, true));
+
+                Write(output.ToString());
+                return problems.Count == 0 ? 0 : 1;
+            }
+
+            case "--validate-cred":
+            {
+                var tool = catalog.Find(args.ElementAtOrDefault(1) ?? "");
+                if (tool is null) return Fail(output, "ferramenta não encontrada");
+                if (!CredentialValidator.CanValidate(tool)) return Fail(output, "ferramenta sem regra de validação declarada");
+
+                var result = CredentialValidator.ValidateAsync(tool, CancellationToken.None).GetAwaiter().GetResult();
+                output.AppendLine(Json(new
+                {
+                    ok = result.State == AuthState.Ok,
+                    ferramenta = tool.Id,
+                    estado = result.State.ToString().ToLowerInvariant(),
+                    mensagem = result.Message
+                }, true));
+                Write(output.ToString());
+                return result.State == AuthState.Ok ? 0 : 1;
+            }
 
             case "--set-cred":
             {

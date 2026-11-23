@@ -182,4 +182,9 @@ public static class HudController
     {
         // o catálogo é lido a cada busca; a HUD não precisa ser recriada
     }
+
+    public static void HideAll()
+    {
+        try { _hud?.HideHud(); } catch { }
+    }
 }

@@ -24,6 +24,7 @@ public sealed partial class MainWindow : Window
 {
     private static readonly Dictionary<string, (bool ok, DateTime when)> ProbeCache = new();
     private Action<bool>? _armHotkeyCapture;
+    private Action? _validateCurrentTool;
 
     public MainWindow()
     {
@@ -53,10 +54,20 @@ public sealed partial class MainWindow : Window
     private void CenterOnScreen()
     {
         var (left, top, right, bottom) = UiKit.WorkAreaAtCursor();
+
+        // a janela não pode ser maior que a área útil: em tela 1366x768 (ou com escala 125 %)
+        // o tamanho padrão estourava e o conteúdo da direita ficava fora do monitor
+        var maxWidth = (int)((right - left) * 0.94);
+        var maxHeight = (int)((bottom - top) * 0.94);
         var size = AppWindow.Size;
-        AppWindow.Move(new PointInt32(
-            left + Math.Max(0, (right - left - size.Width) / 2),
-            top + Math.Max(0, (bottom - top - size.Height) / 2)));
+
+        var width = Math.Min(size.Width, Math.Max(900, maxWidth));
+        var height = Math.Min(size.Height, Math.Max(600, maxHeight));
+
+        AppWindow.MoveAndResize(new RectInt32(
+            left + Math.Max(0, (right - left - width) / 2),
+            top + Math.Max(0, (bottom - top - height) / 2),
+            width, height));
     }
 
     public void SetHotkeyWarning(string message)
@@ -138,6 +149,13 @@ public sealed partial class MainWindow : Window
         };
         timer.Start();
     }
+
+    /// <summary>
+    /// Roda a validação de credencial da ferramenta aberta — o MESMO caminho do 320 ms de digitação.
+    /// Usado por --validate-once para testar a tela sem depender de teclado.
+    /// </summary>
+    public void ValidateCredentialsNow() =>
+        DispatcherQueue.TryEnqueue(() => _validateCurrentTool?.Invoke());
 
     private void OnOpenHudClick(object sender, RoutedEventArgs e) => HudController.Show();
 
@@ -250,22 +268,66 @@ public sealed partial class MainWindow : Window
 
             ContentPanel.Children.Add(Card(row));
 
-            if (!tool.IsBroken && tool.Network is not null)
+            if (!tool.IsBroken && (tool.Network is not null || tool.Credentials is not null))
                 _ = UpdateStatusAsync(tool, status);
         }
     }
 
+    /// <summary>
+    /// Bolinha única de status da ferramenta. Ela reflete as DUAS coisas ao mesmo tempo:
+    /// comunicação com o serviço e aceitação das credenciais.
+    ///   cinza  = não verificado
+    ///   verde  = serviço responde e credenciais aceitas (ou não exige)
+    ///   amarelo= serviço responde, mas autenticação falhou (ou credenciais faltando)
+    ///   vermelho = sem conexão com o serviço
+    /// </summary>
     private async Task UpdateStatusAsync(ToolManifest tool, TextBlock target)
     {
-        var ok = await Probes.CheckTcpAsync(tool.Network!.Host, tool.Network.Port, 2500);
-        ProbeCache[tool.Id] = (ok, DateTime.Now);
-        target.Text = ok ? "●" : "●";
-        target.Foreground = new SolidColorBrush(ok
-            ? Windows.UI.Color.FromArgb(255, 108, 214, 138)
-            : Windows.UI.Color.FromArgb(255, 232, 122, 122));
-        ToolTipService.SetToolTip(target, ok
-            ? $"{tool.Network.Label} respondeu"
-            : $"Sem resposta de {tool.Network.Host}:{tool.Network.Port} — verifique a VPN");
+        bool? reachable = null;
+        if (tool.Network is not null)
+            reachable = await Probes.CheckTcpAsync(tool.Network.Host, tool.Network.Port, 2500);
+
+        ProbeCache[tool.Id] = (reachable ?? false, DateTime.Now);
+
+        var auth = CredentialValidator.LastKnown(tool.Id);
+        var creds = Probes.CheckCredentials(tool);
+        var requiresCredentials = tool.Credentials is not null && tool.Credentials.Fields.Count > 0;
+
+        Windows.UI.Color color;
+        string tooltip;
+
+        if (reachable == false)
+        {
+            color = Windows.UI.Color.FromArgb(255, 232, 122, 122);          // vermelho
+            tooltip = $"Sem resposta de {tool.Network!.Host}:{tool.Network.Port} — verifique a VPN";
+        }
+        else if (auth.State == AuthState.Refused)
+        {
+            color = Windows.UI.Color.FromArgb(255, 232, 184, 75);           // amarelo
+            tooltip = "Autenticação recusada pelo serviço: " + auth.Message +
+                      " — corrija as credenciais na aba da ferramenta";
+        }
+        else if (requiresCredentials && !creds.Complete)
+        {
+            color = Windows.UI.Color.FromArgb(255, 232, 184, 75);           // amarelo
+            tooltip = "Credenciais incompletas: faltando " + string.Join(", ", creds.Missing);
+        }
+        else if (reachable == true && auth.State != AuthState.Unreachable)
+        {
+            color = Windows.UI.Color.FromArgb(255, 108, 214, 138);          // verde
+            tooltip = auth.State == AuthState.Ok
+                ? $"{tool.Network?.Label ?? "serviço"} respondeu · credenciais aceitas ({auth.When:HH:mm})"
+                : $"{tool.Network?.Label ?? "serviço"} respondeu · credenciais não verificadas ainda";
+        }
+        else
+        {
+            color = Windows.UI.Color.FromArgb(255, 138, 138, 138);          // cinza
+            tooltip = "Status não verificado";
+        }
+
+        target.Text = "●";
+        target.Foreground = new SolidColorBrush(color);
+        ToolTipService.SetToolTip(target, tooltip);
     }
 
     private async Task RunFromDashboardAsync(ToolManifest tool)
@@ -303,6 +365,33 @@ public sealed partial class MainWindow : Window
         ContentPanel.Children.Clear();
         AddPageHeader(tool.Name, tool.IsBroken ? null : tool.Description);
 
+        // indicador único de "testando" para toda validação desta ferramenta
+        var busyRing = new ProgressRing
+        {
+            Width = 16,
+            Height = 16,
+            IsActive = false,
+            Visibility = Visibility.Collapsed,
+            Foreground = (Brush)Application.Current.Resources["HubAccentBrush"]
+        };
+        var busyText = Muted("");
+        var busyRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(0, -6, 0, 0)
+        };
+        busyRow.Children.Add(busyRing);
+        busyRow.Children.Add(busyText);
+        ContentPanel.Children.Add(busyRow);
+
+        void SetToolBusy(bool on, string message = "testando…")
+        {
+            busyRing.IsActive = on;
+            busyRing.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            busyText.Text = on ? message : "";
+        }
+
         if (tool.IsBroken)
         {
             AddBlock("Manifesto com problema", Para(
@@ -331,30 +420,105 @@ public sealed partial class MainWindow : Window
         // 3 — configurações e credenciais
         var requirements = new StackPanel { Spacing = 12 };
 
-        // 3a — gatilho configurável
-        var triggerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        var triggerBox = new TextBox
-        {
-            Header = "Gatilho desta ferramenta",
-            Text = SettingsService.TriggerFor(tool),
-            PlaceholderText = ":mkt",
-            Width = 200
-        };
+        // 3a — gatilho da ferramenta: mesmo padrão de interação do atalho global
+        // (armar → capturar o que o usuário digita → validar pela regra única → gravar)
+        var triggerCaption = new TextBlock { Text = "Gatilho desta ferramenta", FontSize = 12, Opacity = 0.75 };
         var triggerStatus = Muted("");
-        var saveTrigger = new Button { Content = "Salvar" };
-        var commitTrigger = () =>
+        var triggerFrame = new Border
         {
-            SettingsService.SetTrigger(tool, triggerBox.Text);
-            triggerBox.Text = SettingsService.TriggerFor(tool);
-            triggerStatus.Text = $"gatilho salvo: {SettingsService.TriggerFor(tool)}";
+            BorderThickness = new Thickness(1.5),
+            CornerRadius = new CornerRadius(6),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(60, 255, 255, 255)),
+            Width = 220,
+            Child = new TextBox
+            {
+                Text = SettingsService.TriggerFor(tool),
+                PlaceholderText = ":mkt",
+                FontFamily = new FontFamily("Consolas"),
+                BorderThickness = new Thickness(0),
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0))
+            }
         };
-        saveTrigger.Click += (_, _) => commitTrigger();
-        triggerBox.LostFocus += (_, _) => commitTrigger();
-        triggerRow.Children.Add(triggerBox);
-        triggerRow.Children.Add(saveTrigger);
+        var triggerBox = (TextBox)triggerFrame.Child;
+        var armTrigger = new Button { Content = "Definir gatilho" };
+        var triggerArmed = false;
+
+        void PaintTrigger(bool? ok)
+        {
+            triggerFrame.BorderBrush = ok switch
+            {
+                true => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 108, 214, 138)),   // verde
+                false => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 232, 184, 75)),  // amarelo
+                null => new SolidColorBrush(Windows.UI.Color.FromArgb(60, 255, 255, 255))
+            };
+        }
+
+        void CommitTrigger()
+        {
+            var typed = triggerBox.Text;
+            var problem = TriggerPolicy.Validate(typed, App.Catalog, tool.Id);
+            if (problem is not null)
+            {
+                PaintTrigger(false);
+                triggerStatus.Text = "recusado: " + problem;
+                return;
+            }
+
+            var normalized = TriggerPolicy.Normalize(typed);
+            SettingsService.SetTrigger(tool, normalized);
+            triggerBox.Text = SettingsService.TriggerFor(tool);
+            PaintTrigger(true);
+            triggerStatus.Text = "— ok · gatilho ativo " + SettingsService.TriggerFor(tool);
+            AppPaths.Log($"gatilho de {tool.Id} definido: {SettingsService.TriggerFor(tool)}");
+        }
+
+        void SetTriggerArmed(bool on)
+        {
+            triggerArmed = on;
+            armTrigger.Content = on ? "digite o gatilho…" : "Definir gatilho";
+            if (!on) return;
+            PaintTrigger(null);
+            triggerStatus.Text = "captura armada — digite o gatilho e pressione Enter";
+            triggerBox.Focus(FocusState.Programmatic);
+            triggerBox.SelectAll();
+        }
+
+        armTrigger.Click += (_, _) => SetTriggerArmed(true);
+
+        triggerBox.KeyDown += (_, e) =>
+        {
+            if (!triggerArmed) return;
+            if (e.Key == VirtualKey.Escape)
+            {
+                e.Handled = true;
+                triggerBox.Text = SettingsService.TriggerFor(tool);
+                SetTriggerArmed(false);
+                triggerStatus.Text = "captura cancelada";
+                PaintTrigger(null);
+                return;
+            }
+            if (e.Key == VirtualKey.Enter)
+            {
+                e.Handled = true;
+                SetTriggerArmed(false);
+                CommitTrigger();
+            }
+        };
+
+        triggerBox.LostFocus += (_, _) =>
+        {
+            if (!triggerArmed) return;
+            SetTriggerArmed(false);
+            CommitTrigger();
+        };
+
+        var triggerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Bottom };
+        triggerRow.Children.Add(triggerFrame);
+        triggerRow.Children.Add(armTrigger);
+        requirements.Children.Add(triggerCaption);
         requirements.Children.Add(triggerRow);
         requirements.Children.Add(triggerStatus);
-        requirements.Children.Add(Muted("Aparece na busca do HUD e nos cartões. O texto é salvo sozinho ao sair do campo."));
+        requirements.Children.Add(Muted("Mesma regra para toda ferramenta: começa com ':', minúsculas, até 32 caracteres e único no catálogo. Aparece na busca do HUD e nos cartões."));
 
         // 3b — campos de entrada (entrada da consulta)
         if (tool.Inputs.Count > 0)
@@ -368,7 +532,7 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        // 3c — credenciais digitadas aqui, guardadas cifradas
+        // 3c — credenciais: digitáveis, gravadas sozinhas e validadas no serviço
         if (tool.Credentials is not null)
         {
             var credLabel = string.IsNullOrWhiteSpace(tool.Credentials.Label) ? "Credenciais" : tool.Credentials.Label;
@@ -380,13 +544,51 @@ public sealed partial class MainWindow : Window
                 Margin = new Thickness(0, 4, 0, 0)
             });
 
-            var credBoxes = new List<(CredentialField field, Func<string> read, Action clear)>();
-            var credPanel = new StackPanel { Spacing = 8 };
+            var canValidate = CredentialValidator.CanValidate(tool);
+            var entries = new List<(CredentialField field, Func<string> read, Action clear, Border frame, TextBlock status)>();
+            var credPanel = new StackPanel { Spacing = 10 };
             var credStatus = Muted("");
+            var suppress = true;     // não valida enquanto a tela está sendo montada
+            var validating = false;
+            Microsoft.UI.Dispatching.DispatcherQueueTimer? debounce = null;
+
+            var neutral = Windows.UI.Color.FromArgb(60, 255, 255, 255);
+            var green = Windows.UI.Color.FromArgb(255, 108, 214, 138);
+            var amber = Windows.UI.Color.FromArgb(255, 232, 184, 75);
+
+            void Paint(AuthState state, string message = "")
+            {
+                foreach (var entry in entries)
+                {
+                    var color = state switch
+                    {
+                        AuthState.Ok => green,
+                        AuthState.Refused => amber,
+                        _ => neutral           // sem resposta / não verificado: não julga a credencial
+                    };
+                    entry.frame.BorderBrush = new SolidColorBrush(color);
+                    entry.status.Text = state switch
+                    {
+                        AuthState.Ok => "— ok",
+                        AuthState.Refused => "— recusado",
+                        AuthState.Unreachable => "— sem resposta",
+                        _ => "—"
+                    };
+                    entry.status.Foreground = new SolidColorBrush(state switch
+                    {
+                        AuthState.Ok => green,
+                        AuthState.Refused => amber,
+                        _ => Windows.UI.Color.FromArgb(170, 255, 255, 255)
+                    });
+                }
+
+                if (!string.IsNullOrWhiteSpace(message))
+                    credStatus.Text = "serviço: " + message;
+            }
 
             void SaveCredentials(bool announce)
             {
-                foreach (var (field, read, _) in credBoxes)
+                foreach (var (field, read, _, _, _) in entries)
                     CredentialStore.Set(tool.Id, field.Key, read());
 
                 var state = Probes.CheckCredentials(tool);
@@ -396,60 +598,137 @@ public sealed partial class MainWindow : Window
                 if (announce) credStatus.Text += " · salvo agora";
             }
 
+            async void RunValidationAsync()
+            {
+                if (!canValidate || validating) return;
+                SaveCredentials(false);
+
+                if (!Probes.CheckCredentials(tool).Complete)
+                {
+                    Paint(AuthState.Unknown);
+                    credStatus.Text = "preencha usuário e senha para validar";
+                    return;
+                }
+
+                validating = true;
+                SetToolBusy(true, "validando credenciais…");
+                Paint(AuthState.Unknown);
+                credStatus.Text = "consultando o serviço…";
+
+                var result = await CredentialValidator.ValidateAsync(tool, CancellationToken.None);
+
+                validating = false;
+                SetToolBusy(false);
+                Paint(result.State, result.Message);
+            }
+
+            void ScheduleValidation()
+            {
+                if (suppress) return;              // regra 3.1: só por interação do usuário
+                debounce?.Stop();
+                debounce = DispatcherQueue.CreateTimer();
+                debounce.Interval = TimeSpan.FromMilliseconds(320);   // regra 3.2
+                debounce.IsRepeating = false;
+                debounce.Tick += (_, _) => RunValidationAsync();
+                debounce.Start();
+            }
+
             foreach (var field in tool.Credentials.Fields)
             {
                 var currentValue = CredentialStore.Get(tool.Id, field.Key);
+
+                var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                header.Children.Add(new TextBlock { Text = field.Label, FontSize = 12, Opacity = 0.75 });
+                var fieldStatus = new TextBlock
+                {
+                    Text = "—",
+                    FontSize = 12,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(170, 255, 255, 255))
+                };
+                header.Children.Add(fieldStatus);
+
+                var frame = new Border
+                {
+                    BorderThickness = new Thickness(1.5),
+                    CornerRadius = new CornerRadius(6),
+                    BorderBrush = new SolidColorBrush(neutral),
+                    Width = 340
+                };
+
                 if (field.Secret)
                 {
                     var box = new PasswordBox
                     {
-                        Header = field.Label,
                         PlaceholderText = field.Placeholder,
                         Password = currentValue,
                         PasswordRevealMode = PasswordRevealMode.Peek,
-                        Width = 320
+                        BorderThickness = new Thickness(0),
+                        Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0))
                     };
+                    box.PasswordChanged += (_, _) => ScheduleValidation();
                     box.LostFocus += (_, _) => SaveCredentials(false);
-                    credBoxes.Add((field, () => box.Password, () => box.Password = ""));
-                    credPanel.Children.Add(box);
+                    frame.Child = box;
+                    entries.Add((field, () => box.Password, () => box.Password = "", frame, fieldStatus));
                 }
                 else
                 {
                     var box = new TextBox
                     {
-                        Header = field.Label,
                         PlaceholderText = field.Placeholder,
                         Text = currentValue,
-                        Width = 320
+                        BorderThickness = new Thickness(0),
+                        Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0))
                     };
+                    box.TextChanged += (_, _) => ScheduleValidation();
                     box.LostFocus += (_, _) => SaveCredentials(false);
-                    credBoxes.Add((field, () => box.Text, () => box.Text = ""));
-                    credPanel.Children.Add(box);
+                    frame.Child = box;
+                    entries.Add((field, () => box.Text, () => box.Text = "", frame, fieldStatus));
                 }
+
+                var item = new StackPanel { Spacing = 4 };
+                item.Children.Add(header);
+                item.Children.Add(frame);
+                credPanel.Children.Add(item);
             }
 
             var credActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
             var saveCred = new Button { Content = "Salvar credenciais" };
-            saveCred.Click += (_, _) => SaveCredentials(true);
+            saveCred.Click += (_, _) =>
+            {
+                SaveCredentials(true);
+                RunValidationAsync();
+            };
             var clearCred = new Button { Content = "Apagar" };
             clearCred.Click += (_, _) =>
             {
                 CredentialStore.Clear(tool.Id);
-                foreach (var (_, _, clear) in credBoxes) clear();
+                foreach (var (_, _, clear, _, _) in entries) clear();
+                Paint(AuthState.Unknown);
                 credStatus.Text = "credenciais apagadas deste computador";
             };
             credActions.Children.Add(saveCred);
             credActions.Children.Add(clearCred);
             credPanel.Children.Add(credActions);
             credPanel.Children.Add(credStatus);
-            credPanel.Children.Add(Muted("Guardadas com a criptografia do seu usuário do Windows (DPAPI), no cofre do próprio HUB. Nada é enviado para fora desta máquina."));
 
-            var initialState = Probes.CheckCredentials(tool);
-            credStatus.Text = initialState.Complete
+            credPanel.Children.Add(Muted(canValidate
+                ? "Guardadas com a criptografia do seu usuário do Windows (DPAPI). A senha é conferida no serviço 320 ms depois que você para de digitar."
+                : "Esta ferramenta ainda não declarou como validar credenciais — o HUB guarda, mas não confere."));
+
+            var initial = Probes.CheckCredentials(tool);
+            credStatus.Text = initial.Complete
                 ? "credenciais salvas e cifradas neste computador"
-                : "faltando: " + string.Join(", ", initialState.Missing);
+                : "faltando: " + string.Join(", ", initial.Missing);
+
+            var lastKnown = CredentialValidator.LastKnown(tool.Id);
+            if (lastKnown.State != AuthState.Unknown) Paint(lastKnown.State, lastKnown.Message);
+
+            _validateCurrentTool = RunValidationAsync;
 
             requirements.Children.Add(credPanel);
+
+            suppress = false;   // a partir daqui, digitar dispara validação
         }
 
         if (tool.Network is not null)
@@ -461,7 +740,9 @@ public sealed partial class MainWindow : Window
             probeButton.Click += async (_, _) =>
             {
                 probeResult.Text = "testando…";
+                SetToolBusy(true, "testando conexão…");
                 var ok = await Probes.CheckTcpAsync(tool.Network!.Host, tool.Network.Port, 3000);
+                SetToolBusy(false);
                 probeResult.Text = ok
                     ? $"respondeu ({DateTime.Now:HH:mm:ss})"
                     : "sem resposta — verifique a VPN";

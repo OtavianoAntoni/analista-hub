@@ -46,7 +46,17 @@
         "placeholder": "senha do inventário"
       }
     ],
-    "legacyFile": "%USERPROFILE%/Documents/Processos/Analyser/credenciais/cofre.md"
+    "legacyFile": "%USERPROFILE%/Documents/Processos/Analyser/credenciais/cofre.md",
+    "validation": {
+      "url": "http://10.0.0.1:3113/api/auth_ep",
+      "method": "POST",
+      "contentType": "application/json",
+      "bodyTemplate": "{\"type\":\"auth\",\"email\":\"{user}\",\"passw\":\"{passwd}\"}",
+      "okJsonPath": "st",
+      "okEquals": "true",
+      "messagePath": "msg",
+      "timeoutSeconds": 8
+    }
   },
   "network": {
     "label": "Inventário (HTTP)",

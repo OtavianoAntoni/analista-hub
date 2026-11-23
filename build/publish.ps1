@@ -1,4 +1,4 @@
-# Publica o Analista Hub como pasta portátil (self-contained, sem administrador).
+﻿# Publica o Analista Hub como pasta portátil (self-contained, sem administrador).
 # Uso:  powershell -ExecutionPolicy Bypass -File build\publish.ps1
 param(
     [string]$Configuration = 'Release',
@@ -62,3 +62,11 @@ if (Test-Path $launcherDir)
 }
 
 Write-Host "== pronto: $files arquivos, $totalMb MB em $outDir"
+
+# Gate permanente: nenhuma publicação passa com ferramenta fora das regras
+# (gatilho inválido/duplicado, script ausente, credencial sem campo). Ver docs/REGRAS-DE-FERRAMENTA.md
+Write-Host "== gate de catálogo (docs/REGRAS-DE-FERRAMENTA.md)"
+$gateScript = Join-Path $root 'build\check-tools.ps1'
+$gateExe = Join-Path $outDir 'AnalistaHub.exe'
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $gateScript -Exe $gateExe
+if ($LASTEXITCODE -ne 0) { throw "gate de catálogo falhou — publicação bloqueada" }

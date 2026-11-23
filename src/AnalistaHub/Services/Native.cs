@@ -165,6 +165,25 @@ internal static class Native
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr LoadImage(IntPtr hinst, string name, uint type, int cx, int cy, uint load);
 
+    // ---------- menu de contexto da bandeja ----------
+    [DllImport("user32.dll")] public static extern IntPtr CreatePopupMenu();
+    [DllImport("user32.dll")] public static extern bool DestroyMenu(IntPtr hMenu);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern bool AppendMenu(IntPtr hMenu, uint uFlags, UIntPtr uIDNewItem, string? lpNewItem);
+    [DllImport("user32.dll")]
+    public static extern int TrackPopupMenuEx(IntPtr hMenu, uint uFlags, int x, int y, IntPtr hWnd, IntPtr lptpm);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool SetMenuDefaultItem(IntPtr hMenu, uint uItem, uint fByPos);
+
+    public const uint MF_STRING = 0x0000;
+    public const uint MF_SEPARATOR = 0x0800;
+    public const uint MF_GRAYED = 0x0001;
+    public const uint MF_DEFAULT = 0x1000;
+    public const uint TPM_LEFTALIGN = 0x0000;
+    public const uint TPM_RIGHTBUTTON = 0x0002;
+    public const uint TPM_RETURNCMD = 0x0100;
+    public const uint WM_NULL = 0x0000;
+
     [DllImport("user32.dll")] public static extern bool DestroyIcon(IntPtr hIcon);
 
     public const uint IMAGE_ICON = 1;

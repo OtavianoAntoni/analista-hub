@@ -109,9 +109,12 @@ resultado. Contrato de chamada na §7.
 
 Layout estilo PowerToys: navegação à esquerda, conteúdo à direita.
 
-- **Início**: cartões das ferramentas com nome, o que faz, gatilho, estado do serviço
-  (● acessível / ● sem conexão / ○ não verificado) e botões **Abrir** (abre a HUD já filtrada na
-  ferramenta) e **Testar** (executa com o valor de exemplo/atual do clipboard).
+- **Início**: cartões das ferramentas com nome, o que faz, gatilho e **uma única bolinha de
+  status** que reflete comunicação **e** autenticação (ver 5.2). Botões **Abrir** (HUD já filtrada)
+  e **Testar** (executa com o valor atual do clipboard).
+- **Bandeja**: clique esquerdo abre o HUD; clique direito abre um menu com o **nome de cada
+  ferramenta** (abre a aba dela), **Buscar ferramenta…**, **Configurações** e **Fechar aplicativo**.
+  O menu é montado na hora, então ferramenta nova aparece sem reiniciar.
 - **Página da ferramenta** — quatro blocos, espelhando exatamente os quatro itens do `IDEA.md`:
   1. **Para que serve** — descrição em linguagem de operação.
   2. **Como executar** — gatilho, atalho global, exemplo de uso, duração típica.
@@ -139,6 +142,21 @@ Layout estilo PowerToys: navegação à esquerda, conteúdo à direita.
 - Exige ao menos um modificador (Ctrl/Alt/Shift/Win). `Esc` cancela. Perder o foco cancela.
 - Se o Windows recusar (combinação já usada por outro programa), a mensagem diz isso e o atalho
   anterior continua valendo.
+
+### 5.2 Bolinha de status — uma só, quatro estados
+
+A mesma bolinha do cartão responde pelas duas perguntas (o serviço responde? a autenticação passa?):
+
+| Cor | Significado |
+|---|---|
+| cinza | não verificado |
+| verde | serviço respondeu e credenciais aceitas (ou a ferramenta não exige) |
+| amarelo | serviço respondeu, mas **autenticação recusada** — ou credenciais faltando |
+| vermelho | sem conexão com o serviço |
+
+O estado de autenticação vem da última validação feita pelo usuário (ou da última execução que
+falhou no login), guardado em `settings.json` — não há uma segunda bolinha para "login".
+A regra completa está em `docs/REGRAS-DE-FERRAMENTA.md` (R5).
 
 ---
 
@@ -181,6 +199,24 @@ Layout estilo PowerToys: navegação à esquerda, conteúdo à direita.
   log, histórico ou manifesto.
 - Compatibilidade: se o usuário não preencher, o script antigo continua lendo o cofre markdown que
   ele já conhece. Nada quebra para quem usa o Espanso.
+
+### 6.6 Validação de credenciais ao digitar (item 3)
+
+Só existe quando o manifesto declara `credentials.validation` (url, método, corpo com `{user}` e
+`{passwd}`, caminho do campo de sucesso na resposta JSON e caminho da mensagem).
+
+| Regra | Comportamento |
+|---|---|
+| 3.1 Gatilho | a validação **só** roda quando o usuário interage com os campos — nunca ao abrir a tela, nunca em segundo plano |
+| 3.2 Espera | 320 ms depois da última tecla, então **uma** requisição ao serviço declarado |
+| 3.3 Feedback | travessão ao lado do rótulo: `Usuário — ok`, `Senha — recusado`, `— sem resposta`, `—` (não verificado) |
+| 3.4 Visual | contorno do campo: **verde** quando aceito, **amarelo** quando recusado, neutro quando não há resposta (não julga a credencial) |
+| 3.5 Espera visual | **um** indicador circular por ferramenta, usado também pelo "Testar conexão" |
+| Resultado | guardado por ferramenta em `settings.json` (estado, hora, mensagem do servidor) e reaproveitado na bolinha do Início |
+
+O corpo da requisição contém a senha: nada é logado, e a resposta é descartada depois de ler apenas
+o campo de sucesso/mensagem. Falha de autenticação detectada numa execução real também atualiza o
+estado — a bolinha fica amarela sem precisar de nova validação.
 
 ---
 
@@ -269,7 +305,21 @@ faltando) **sem expor nenhum segredo**.
 
 ---
 
-## 11. Evidência usada
+## 13. Gate de catálogo (torna as regras permanentes)
+
+`build/publish.ps1` roda `AnalistaHub.exe --check-tools` no pacote gerado e **aborta** a publicação
+se alguma ferramenta violar as regras de `docs/REGRAS-DE-FERRAMENTA.md`:
+
+- manifesto inválido ou script inexistente;
+- gatilho fora da regra (formato, tamanho) ou repetido;
+- credenciais declaradas sem campos.
+
+Rodar a qualquer momento: `build\check-tools.ps1` ou `AnalistaHub.exe --check-tools`
+(exit 0 = ok, exit 1 = problema, com a lista em JSON).
+
+---
+
+## 14. Evidência usada
 
 | Afirmação | Evidência |
 |---|---|
@@ -285,7 +335,6 @@ faltando) **sem expor nenhum segredo**.
 ---
 
 ## 12. Estado da verificação (o que foi realmente executado)
-
 Ambiente: Windows 10 corporativo, sem administrador. SDK .NET 8.0.428 instalado no perfil
 (`%USERPROFILE%\.dotnet`), Windows App SDK 1.8.260921001.
 
@@ -307,7 +356,14 @@ Ambiente: Windows 10 corporativo, sem administrador. SDK .NET 8.0.428 instalado 
 | Senha correta no HUB | `--set-cred` com valor do cofre + `--test` | `ok: true`, valor `E3210E3C4EE71` |
 | Cofre antigo continua válido | script chamado direto, sem env | responde `E3210E3C4EE71` (Espanso não quebra) |
 | Gatilho configurável (item 4) | `--set-trigger mkt-serial :sn` + `--list-tools` | `gatilho: ":sn"`, persistido em `settings.json`, volta a `:mkt` |
-| Clique direito na bandeja (item 1) | `PostMessage(WM_TRAYICON, WM_RBUTTONUP)` | log `tray: mensagem 0x205` → `ShowMainWindow` com `fg=hwnd ok=True` |
+| Clique direito na bandeja (item 1) | `PostMessage(WM_TRAYICON, WM_RBUTTONUP)` | menu com 7 itens (2 ferramentas, Buscar, Configurações, Fechar); `tray: menu aberto (7 itens), escolhido=0` ao cancelar |
+| Gate de catálogo | manifesto com gatilho duplicado (`:MKT` vs `:mkt`) + `--check-tools` | `ok:false`, exit 1, motivo "o gatilho :mkt já é da ferramenta …"; volta a `ok:true` sem o manifesto |
+| Validação de credencial (aceita) | `--validate-cred mkt-serial` | `estado: ok`, `mensagem: auth_success` |
+| Validação de credencial (recusada) | senha errada + `--validate-cred` | `estado: refused`, `mensagem: auth_failed`, exit 1 |
+| Feedback na tela (aceita) | `--page mkt-serial --validate-once` | rótulos `Usuário — ok` / `Senha — ok` e contorno verde |
+| Feedback na tela (recusada) | senha errada + `--validate-once` | rótulos `— recusado`, contorno amarelo, `serviço: auth_failed` |
+| Bolinha única (item 4) | Início com estado `refused` persistido | bolinha **amarela** em "SN da RB pelo IP" e **verde** em "Fabricante pelo MAC" |
+| Janela cabe na tela | abertura em monitor 1451×864 físico | janela enquadrada em 94 % da área útil (antes estourava e cortava a direita) |
 | Busca por gatilho + campos | digitar `:macv` + `Enter` | filtra para 1 ferramenta e abre o campo "MAC do equipamento" |
 | Aviso de resultado | `--preview-toast` | janela perto do cursor, valor copiável, fecha em 12 s |
 | Página da ferramenta | `--page mkt-serial` | os quatro blocos renderizam |

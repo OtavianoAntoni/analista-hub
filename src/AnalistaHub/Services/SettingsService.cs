@@ -20,6 +20,8 @@ public sealed class AppSettings
     public Dictionary<string, string> LastInput { get; set; } = new();
     /// <summary>Gatilho redefinido pelo usuário (id -> ":mkt").</summary>
     public Dictionary<string, string> TriggerOverrides { get; set; } = new();
+    /// <summary>Último resultado conhecido da validação de credencial (id -> "estado|quando|mensagem").</summary>
+    public Dictionary<string, string> AuthStatus { get; set; } = new();
 }
 
 public static class AppPaths

@@ -40,12 +40,34 @@ public sealed class CredentialField
     public string Placeholder { get; set; } = "";
 }
 
+/// <summary>
+/// Como o HUB confirma, junto ao serviço, se as credenciais digitadas valem.
+/// Sem este bloco a ferramenta não tem como validar senha — o estado fica "não verificado".
+/// </summary>
+public sealed class CredentialValidation
+{
+    public string Url { get; set; } = "";
+    /// <summary>POST | GET</summary>
+    public string Method { get; set; } = "POST";
+    public string ContentType { get; set; } = "application/json";
+    /// <summary>Corpo com marcadores {user} e {passwd} (só para POST).</summary>
+    public string BodyTemplate { get; set; } = "";
+    /// <summary>Caminho no JSON de resposta que indica sucesso, ex.: "st" ou "data.ok".</summary>
+    public string OkJsonPath { get; set; } = "";
+    /// <summary>Valor (em texto) que significa credencial aceita.</summary>
+    public string OkEquals { get; set; } = "true";
+    /// <summary>Caminho no JSON com a mensagem do servidor (opcional).</summary>
+    public string MessagePath { get; set; } = "";
+    public int TimeoutSeconds { get; set; } = 8;
+}
+
 public sealed class CredentialRequirement
 {
     public string Label { get; set; } = "";
     public List<CredentialField> Fields { get; set; } = new();
     /// <summary>De onde as credenciais vinham antes (só informativo; o HUB não exige arquivo).</summary>
     public string LegacyFile { get; set; } = "";
+    public CredentialValidation? Validation { get; set; }
 }
 
 public sealed class NetworkRequirement

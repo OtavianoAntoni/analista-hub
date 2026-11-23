@@ -49,6 +49,10 @@ ENTREGA.md                  passagem para a sessão que empacota/instala
 
 ## Adicionar uma ferramenta (sem recompilar)
 
+**Leia `docs/REGRAS-DE-FERRAMENTA.md` antes.** As regras de gatilho, validação de credencial e status
+são permanentes e valem para toda ferramenta nova; o publish roda um gate (`--check-tools`) e falha
+se o manifesto não seguir a regra.
+
 Um arquivo `.json` em `%LOCALAPPDATA%\AnalistaHub\tools\` (sobrepõe o embutido de mesmo `id`):
 
 ```json

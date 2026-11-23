@@ -2,9 +2,22 @@ using System.Runtime.InteropServices;
 
 namespace AnalistaHub.Services;
 
+public enum TrayItemKind { Tool, Separator, Command }
+
+public sealed class TrayMenuItem
+{
+    public string Text { get; init; } = "";
+    public Action? Action { get; init; }
+    public TrayItemKind Kind { get; init; } = TrayItemKind.Tool;
+
+    public static TrayMenuItem Separator() => new() { Kind = TrayItemKind.Separator };
+    public static TrayMenuItem Command(string text, Action action) => new() { Text = text, Action = action, Kind = TrayItemKind.Command };
+    public static TrayMenuItem Tool(string text, Action action) => new() { Text = text, Action = action, Kind = TrayItemKind.Tool };
+}
+
 /// <summary>
 /// Ícone na bandeja: janela oculta + Shell_NotifyIcon.
-/// Clique esquerdo abre o HUD; clique direito abre a janela principal.
+/// Clique esquerdo abre o HUD; clique direito abre o menu com as ferramentas, Configurações e Sair.
 /// </summary>
 public sealed class TrayIcon : IDisposable
 {
@@ -18,6 +31,9 @@ public sealed class TrayIcon : IDisposable
 
     public event Action? LeftClick;
     public event Action? RightClick;
+
+    /// <summary>Monta o menu do clique direito. Se não definido, o clique direito abre a janela.</summary>
+    public Func<IReadOnlyList<TrayMenuItem>>? MenuProvider { get; set; }
 
     public TrayIcon(string tooltip)
     {
@@ -105,11 +121,71 @@ public sealed class TrayIcon : IDisposable
                 case Native.WM_RBUTTONUP:
                 case Native.WM_RBUTTONDOWN:
                 case Native.WM_CONTEXTMENU:
-                    try { RightClick?.Invoke(); } catch (Exception ex) { AppPaths.Log("tray right: " + ex.Message); }
+                    try
+                    {
+                        if (MenuProvider is not null) ShowMenu();
+                        else RightClick?.Invoke();
+                    }
+                    catch (Exception ex) { AppPaths.Log("tray right: " + ex); }
                     return IntPtr.Zero;
             }
         }
         return Native.DefWindowProc(hWnd, msg, wParam, lParam);
+    }
+
+    /// <summary>
+    /// Menu nativo do Windows (CreatePopupMenu + TrackPopupMenuEx).
+    /// O SetForegroundWindow antes e o PostMessage(WM_NULL) depois são obrigatórios: sem eles o
+    /// menu fica na tela quando o usuário clica fora.
+    /// </summary>
+    private void ShowMenu()
+    {
+        var items = MenuProvider?.Invoke() ?? Array.Empty<TrayMenuItem>();
+
+        var menu = Native.CreatePopupMenu();
+        if (menu == IntPtr.Zero) return;
+
+        var actions = new Dictionary<int, Action>();
+        var id = 1000;
+        var firstTool = true;
+
+        try
+        {
+            foreach (var item in items)
+            {
+                if (item.Kind == TrayItemKind.Separator)
+                {
+                    Native.AppendMenu(menu, Native.MF_SEPARATOR, UIntPtr.Zero, null);
+                    continue;
+                }
+
+                var flags = Native.MF_STRING;
+                if (item.Kind == TrayItemKind.Tool && firstTool)
+                {
+                    flags |= Native.MF_DEFAULT;
+                    firstTool = false;
+                }
+
+                Native.AppendMenu(menu, flags, (UIntPtr)(uint)id, item.Text);
+                if (item.Action is not null) actions[id] = item.Action;
+                id++;
+            }
+
+            Native.SetForegroundWindow(_hwnd);
+            Native.GetCursorPos(out var pt);
+            var chosen = Native.TrackPopupMenuEx(menu, Native.TPM_LEFTALIGN | Native.TPM_RIGHTBUTTON | Native.TPM_RETURNCMD,
+                pt.X, pt.Y, _hwnd, IntPtr.Zero);
+            Native.PostMessage(_hwnd, Native.WM_NULL, IntPtr.Zero, IntPtr.Zero);
+
+            AppPaths.Log($"tray: menu aberto ({items.Count} itens), escolhido={chosen}");
+
+            if (chosen > 0 && actions.TryGetValue(chosen, out var action))
+                action();
+        }
+        finally
+        {
+            Native.DestroyMenu(menu);
+        }
     }
 
     public void Dispose()

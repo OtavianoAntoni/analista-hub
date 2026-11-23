@@ -81,9 +81,10 @@ public partial class App : Application
             MainWin.SetHotkeyWarning(hotkeyError);
         }
 
-        Tray = new TrayIcon("Analista Hub — clique para buscar, botão direito para abrir");
+        Tray = new TrayIcon("Analista Hub — clique para buscar, botão direito para abrir o menu");
         Tray.LeftClick += () => HudController.Toggle();
         Tray.RightClick += () => ShowMainWindow();
+        Tray.MenuProvider = BuildTrayMenu;
 
         var pageIndex = Array.IndexOf(cliArgs, "--page");
         if (pageIndex >= 0 && pageIndex + 1 < cliArgs.Length)
@@ -92,7 +93,55 @@ public partial class App : Application
         if (cliArgs.Contains("--arm-hotkey"))
             MainWin.ArmHotkeyCapture();
 
+        if (cliArgs.Contains("--validate-once"))
+        {
+            var validateTimer = MainWin.DispatcherQueue.CreateTimer();
+            validateTimer.Interval = TimeSpan.FromMilliseconds(900);
+            validateTimer.IsRepeating = false;
+            validateTimer.Tick += (_, _) => MainWin.ValidateCredentialsNow();
+            validateTimer.Start();
+        }
+
         StartShowSignalWatcher();
+    }
+
+    /// <summary>
+    /// Menu do clique direito na bandeja: nome das ferramentas, Configurações e Fechar aplicativo.
+    /// É montado na hora, então ferramenta nova aparece sem reiniciar.
+    /// </summary>
+    private static IReadOnlyList<TrayMenuItem> BuildTrayMenu()
+    {
+        var items = new List<TrayMenuItem>();
+
+        foreach (var tool in Catalog.Tools.Where(t => !t.IsBroken))
+            items.Add(TrayMenuItem.Tool(tool.Name, () => OpenTool(tool.Id)));
+
+        if (items.Count > 0) items.Add(TrayMenuItem.Separator());
+
+        items.Add(TrayMenuItem.Command("Buscar ferramenta…", HudController.Show));
+        items.Add(TrayMenuItem.Command("Configurações", () =>
+        {
+            ShowMainWindow();
+            MainWin?.NavigateTo("settings");
+        }));
+        items.Add(TrayMenuItem.Separator());
+        items.Add(TrayMenuItem.Command("Fechar aplicativo", ExitApp));
+
+        return items;
+    }
+
+    private static void OpenTool(string toolId)
+    {
+        ShowMainWindow();
+        MainWin?.NavigateTo(toolId);
+    }
+
+    public static void ExitApp()
+    {
+        try { Tray?.Dispose(); } catch { }
+        try { Hotkey?.Dispose(); } catch { }
+        try { HudController.HideAll(); } catch { }
+        Application.Current.Exit();
     }
 
     private void StartShowSignalWatcher()
