@@ -143,6 +143,68 @@ public partial class App : Application
         }
 
         StartShowSignalWatcher();
+        StartUpdateCheck();
+    }
+
+    /// <summary>
+    /// Atualização: uma verificação automática por dia (silenciosa se não há novidade) e um aviso
+    /// flutuante quando existe versão nova — uma vez por versão, para não repetir todo dia.
+    /// O botão "Procurar por atualização agora" (Configurações e menu da bandeja) chama
+    /// <see cref="MainWindow.CheckUpdatesNow"/>.
+    /// </summary>
+    private static void StartUpdateCheck()
+    {
+        try
+        {
+            // atualização aplicada no reinício: a pendência já é a versão que está rodando
+            if (!string.IsNullOrWhiteSpace(Settings.PendingUpdateVersion) &&
+                string.Equals(UpdateService.Normalize(Settings.PendingUpdateVersion),
+                              UpdateService.CurrentVersion, StringComparison.OrdinalIgnoreCase))
+            {
+                AppPaths.Log($"update: rodando {UpdateService.CurrentVersion} — atualização concluída");
+                Settings.PendingUpdateVersion = "";
+                SettingsService.Save();
+            }
+            // pacote apagado (rollback ou limpeza manual): a pendência não vale mais
+            else if (!string.IsNullOrWhiteSpace(Settings.PendingUpdateVersion) &&
+                     UpdateService.PendingPayloadDir() is null)
+            {
+                AppPaths.Log("update: pacote pendente não existe mais — limpando a pendência");
+                Settings.PendingUpdateVersion = "";
+                SettingsService.Save();
+            }
+
+            if (!Settings.AutoCheckUpdates || !UpdateService.CheckDue(TimeSpan.FromHours(24))) return;
+
+            _ = Task.Run(async () =>
+            {
+                var result = await UpdateService.CheckAsync();
+                UpdateService.LastCheck = result;
+                Settings.LastUpdateCheckUtc = result.CheckedAtUtc.ToString("o");
+                SettingsService.Save();
+
+                if (!result.HasUpdate) return;
+                var version = result.LatestVersion ?? "";
+                if (string.Equals(Settings.NotifiedUpdateVersion, version, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                Settings.NotifiedUpdateVersion = version;
+                SettingsService.Save();
+                AppPaths.Log($"update: avisando sobre a versão {version}");
+
+                MainWin?.DispatcherQueue.TryEnqueue(() =>
+                {
+                    try
+                    {
+                        Views.ToastController.ShowMessage("Atualização disponível",
+                            $"Analista Hub v{version} disponível",
+                            "Configurações → Atualizações para instalar");
+                    }
+                    catch (Exception ex) { AppPaths.Log("aviso de atualização: " + ex.Message); }
+                });
+            });
+        }
+        catch (Exception ex) { AppPaths.Log("StartUpdateCheck: " + ex.Message); }
     }
 
     /// <summary>
@@ -193,6 +255,11 @@ public partial class App : Application
             ShowMainWindow();
             MainWin?.NavigateTo("settings");
         }));
+        items.Add(TrayMenuItem.Command("Procurar atualização agora", () =>
+        {
+            ShowMainWindow();
+            MainWin?.CheckUpdatesNow();
+        }));
         items.Add(TrayMenuItem.Separator());
         items.Add(TrayMenuItem.Command("Fechar aplicativo", ExitApp));
 
@@ -209,6 +276,20 @@ public partial class App : Application
     {
         ForcedExit = true;
         AppPaths.Log("saindo pelo menu da bandeja");
+        try { Tray?.Dispose(); } catch { }
+        try { Hotkey?.Dispose(); } catch { }
+        try { HudController.HideAll(); } catch { }
+        try { SsePanelController.HideAll(); } catch { }
+        Application.Current.Exit();
+    }
+
+    /// <summary>
+    /// Encerra só para o script de atualização trocar a pasta (o script reabre o app). Não marca
+    /// ForcedExit: este processo não reinicia sozinho — quem abre o novo é o apply-update.cmd.
+    /// </summary>
+    public static void ExitForUpdate()
+    {
+        AppPaths.Log("saindo para aplicar atualização");
         try { Tray?.Dispose(); } catch { }
         try { Hotkey?.Dispose(); } catch { }
         try { HudController.HideAll(); } catch { }

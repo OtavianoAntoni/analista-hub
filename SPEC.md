@@ -321,6 +321,112 @@ AnalistaHub.exe --version | --help
 `--probe` devolve `servico_responde` (TCP) e `credenciais` (arquivo presente / completo / chaves
 faltando) **sem expor nenhum segredo**.
 
+Comandos de atualização (mesmo contrato, JSON na saída):
+
+```
+AnalistaHub.exe --check-update      consulta o canal e diz se há versão nova
+AnalistaHub.exe --download-update   baixa, confere o SHA-256 e prepara (não aplica)
+AnalistaHub.exe --apply-update      troca a pasta do programa e reabre o app
+```
+
+---
+
+## 7.2 Atualização automática
+
+### 7.2.1 Canal
+
+O app lê um **manifesto publicado junto da release** do GitHub:
+
+```
+https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+```
+
+Ponto importante: não é a API do GitHub (`api.github.com`). O endereço
+`releases/latest/download/<arquivo>` é um link direto para o arquivo da release mais recente — não
+consome o limite de 60 requisições/hora por IP e não depende de token. Pode ser trocado pela
+variável `ANALISTAHUB_UPDATE_FEED` (testes) ou pelo campo `UpdateFeedUrl` em `settings.json`.
+
+```json
+{
+  "schema": 1,
+  "version": "0.2.1",
+  "publishedAt": "2026-11-24T12:00:00Z",
+  "notes": "texto curto mostrado na tela",
+  "assets": {
+    "win-x64": { "url": "https://.../AnalistaHub-0.2.1-win-x64.zip",
+                 "sha256": "df47…", "size": 85472414 }
+  }
+}
+```
+
+Comparação de versão é numérica (`0.2.10 > 0.2.9`); tag com `v` e sufixo (`-beta`) é normalizada.
+**Só há atualização com pacote e SHA-256 no manifesto.** Manifesto sem hash é recusado (não existe
+"baixar sem conferir").
+
+### 7.2.2 Cadência
+
+- Uma verificação automática por dia, no máximo: `settings.json.LastUpdateCheckUtc` guarda a última;
+  reabrir o app no mesmo dia **não** verifica de novo.
+- Se houver versão nova, um aviso flutuante aparece **uma vez por versão** (`NotifiedUpdateVersion`).
+- Sem novidade, sem 404 e sem erro de rede: silêncio total (só linha no `hub.log`).
+- Desligável no toggle "Procurar automaticamente (1x por dia)" em Configurações → Atualizações.
+
+### 7.2.3 "Procurar por atualização agora"
+
+Existe em dois lugares, com o mesmo efeito: o bloco **Atualizações** em Configurações e o item
+**Procurar atualização agora** no menu do ícone da bandeja (que abre Configurações já verificando).
+
+Estados do bloco:
+
+| Estado | Texto | Botões |
+|---|---|---|
+| nunca verificado na sessão | "Ainda não verificado nesta sessão." | Procurar por atualização agora |
+| na última versão | "Você está na versão mais recente (v0.2.0). (verificado em …)" | Procurar… |
+| atualização disponível | "Atualização disponível: v0.2.1 (instalada: v0.2.0)." | Procurar… · **Baixar e instalar** |
+| baixando | "Baixando a versão 0.2.1… 42 %" + barra de progresso | — |
+| baixado | "Pacote v0.2.1 baixado. Reinicie para concluir." | **Reiniciar e atualizar** |
+| canal inacessível | motivo em texto (DNS, proxy, 401/403/404) | Procurar… |
+
+### 7.2.4 Aplicação (troca da pasta)
+
+O pacote é um `.zip` com a pasta portátil na raiz. Fluxo:
+
+1. baixa para `%LOCALAPPDATA%\AnalistaHub\update\<versao>\package.zip`;
+2. confere o SHA-256 do manifesto — divergência → download descartado, nada é aplicado;
+3. extrai em `…\<versao>\payload` e confere que existe `AnalistaHub.exe`;
+4. grava `apply-update.cmd` e reabre o app por ele; o app atual se encerra.
+
+O script espera o processo sair, renomeia a pasta atual para `AnalistaHub.old`, move o payload para
+o lugar, inicia o app novo e **confirma que ele subiu** (até 60 s). Se não subiu, apaga a pasta nova,
+devolve a antiga, reabre e apaga o pacote. Se outro processo estiver com a pasta aberta (renomear
+falha), ele espelha com `robocopy` em vez de renomear.
+
+Regras que vieram de falha real:
+
+- **todo comando externo do script usa caminho absoluto** (`%SystemRoot%\System32\...`). Com
+  `find`/`tasklist` vindos do `PATH`, um `find` de Git/MSYS fazia a sonda falhar sempre e o rollback
+  apagava uma instalação boa;
+- o rollback **não insiste** em apagar pasta com arquivo travado: para, deixa a cópia antiga em
+  `…old` e registra no log;
+- em pasta de build (`…\bin\Debug`), ou sem permissão de escrita, `--apply-update` recusa em vez de
+  tentar.
+
+### 7.2.5 Publicação (CI)
+
+`.github/workflows/release.yml`, disparado por tag `v*`:
+
+1. `build/package-release.ps1 -Version <x.y.z>` publica, comprime, calcula o SHA-256 e escreve
+   `latest.json` e `notas.md` em `dist/release`;
+2. o job **reconfere** hash e tamanho do zip contra o manifesto (mesma checagem que o app faz);
+3. `gh release create v<x.y.z> --latest` sobe `zip`, `zip.sha256` e `latest.json`.
+
+Publicar: `git tag v0.2.1 && git push origin v0.2.1`.
+
+**Pré-requisito de visibilidade:** o manifesto e o zip precisam ser legíveis sem autenticação. Em
+repositório **privado** o `GET` responde 404/401 e o app mostra "canal respondeu 404 — se o
+repositório for privado…". Token embutido em aplicativo distribuído não é opção (qualquer um extrai).
+As saídas: repositório público, ou repositório público só de releases alimentado pelo CI.
+
 ---
 
 ## 8. Requisitos não funcionais
@@ -328,7 +434,8 @@ faltando) **sem expor nenhum segredo**.
 - **Sem administrador.** Instala e roda a partir da pasta do usuário; sem serviço, sem chave de
   registro em HKLM, sem driver.
 - **Uma instância só**: abrir de novo traz a janela existente para frente.
-- **Sem rede além dos serviços das ferramentas.** Sem telemetria.
+- **Sem rede além dos serviços das ferramentas e do canal de atualização.** Nenhuma telemetria: a
+  única chamada de rede que não é ferramenta é o `GET` do manifesto de atualização, uma vez por dia.
 - **Sem segredos** em log, histórico, captura ou arquivo de configuração do HUB; credenciais
   continuam no cofre existente.
 - Partida < 3 s; HUD visível em < 200 ms quando o app já está em segundo plano.

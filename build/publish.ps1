@@ -2,13 +2,15 @@
 # Uso:  powershell -ExecutionPolicy Bypass -File build\publish.ps1
 param(
     [string]$Configuration = 'Release',
-    [string]$Out = 'dist\AnalistaHub'
+    [string]$Out = 'dist\AnalistaHub',
+    [string]$Version = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $root 'src\AnalistaHub\AnalistaHub.csproj'
-$outDir = Join-Path $root $Out
+# Out pode vir relativo (dist\AnalistaHub) ou absoluto (CI, outro script chamando)
+$outDir = if ([System.IO.Path]::IsPathRooted($Out)) { $Out } else { Join-Path $root $Out }
 
 $dotnet = Join-Path $env:USERPROFILE '.dotnet\dotnet.exe'
 if (-not (Test-Path $dotnet)) { $dotnet = 'dotnet' }
@@ -17,7 +19,9 @@ Write-Host "== dotnet: $dotnet"
 & $dotnet --version
 
 Write-Host "== publicando em $outDir"
-& $dotnet publish $project -c $Configuration -r win-x64 --self-contained true -o $outDir
+$versionArg = @()
+if ($Version) { $versionArg = @("-p:Version=$Version"); Write-Host "== versão: $Version" }
+& $dotnet publish $project -c $Configuration -r win-x64 --self-contained true -o $outDir @versionArg
 if ($LASTEXITCODE -ne 0) { throw "publish falhou (exit $LASTEXITCODE)" }
 
 # ATENÇÃO: o publish do WinUI 3 não copia os recursos XAML compilados (.xbf) nem o .pri do app.

@@ -117,12 +117,42 @@ digitar `:macv` → `Enter` → campo aparece → `Enter` de novo com o MAC no c
 - **Antivírus/SmartScreen:** executável não assinado, self-contained, extraído de pasta do usuário.
   Se o SmartScreen reclamar, é assinatura de código — assunto do instalador.
 - **Um único .exe não basta:** a pasta inteira é necessária (runtime + Windows App SDK embutidos).
+- **Atualização automática:** o app se atualiza sozinho (ver §7). A pasta do programa precisa ser
+  **gravável pelo usuário** — instalar em `Program Files` quebra a auto-atualização e o app avisa
+  "a pasta do programa não é gravável".
 
 ---
 
 ## 6. O que ficou fora desta entrega
 
-- Instalador, assinatura, atualização automática (esta entrega termina em `dist/AnalistaHub`).
+- Instalador e assinatura de código (a atualização automática está na §7).
 - Sincronização de configurações entre pessoas da equipe (previsto no `IDEA.md`, não implementado).
 - Migração dos dois scripts existentes para `-Mode hub`.
 - Ações que alteram equipamentos: o HUB só consulta.
+
+---
+
+## 7. Atualização automática (a partir da 0.2.0)
+
+O app verifica **uma vez por dia** se há versão nova, no endereço do manifesto da última release:
+
+```
+https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+```
+
+- Avisa uma vez por versão e mostra o estado em **Configurações → Atualizações**.
+- **Procurar por atualização agora** existe no bloco de Configurações e no menu do ícone da bandeja.
+- O pacote é conferido por SHA-256; a troca fecha o app, substitui a pasta e reabre. Se a versão
+  nova não subir em 60 s, a anterior volta sozinha.
+- Estado em `%LOCALAPPDATA%\AnalistaHub\`: `update\<versao>\` (pacote) e `update\apply.log`
+  (o que o script de troca fez). Preferências em `settings.json` (`AutoCheckUpdates`,
+  `LastUpdateCheckUtc`, `UpdateFeedUrl`).
+
+Publicar versão nova: sobe a `<Version>` no `AnalistaHub.csproj`, commita e empurra a tag
+`v<x.y.z>` — o workflow `.github/workflows/release.yml` builda, empacota e publica (zip +
+`latest.json`). Detalhe em `SPEC.md` §7.2.
+
+**Requisito do canal:** o manifesto e o zip precisam ser legíveis **sem autenticação**. Enquanto o
+repositório for privado, o `GET` responde 404 e o app mostra "nenhuma versão publicada ainda".
+Alternativas: repositório público (o README avisa para revisar os endereços internos antes),
+repositório público só de releases, ou `UpdateFeedUrl` apontando para um endereço interno.

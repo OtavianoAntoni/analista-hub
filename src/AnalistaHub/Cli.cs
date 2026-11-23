@@ -19,7 +19,8 @@ public static class Cli
 
     public static bool IsCliInvocation(string[] args) =>
         args.Length > 0 && args[0] is "--list-tools" or "--test" or "--probe" or "--version" or "--help"
-            or "--set-cred" or "--clear-cred" or "--set-trigger" or "--validate-cred" or "--check-tools";
+            or "--set-cred" or "--clear-cred" or "--set-trigger" or "--validate-cred" or "--check-tools"
+            or "--check-update" or "--download-update" or "--apply-update";
 
     public static int Run(string[] args, ToolCatalog catalog)
     {
@@ -49,6 +50,9 @@ public static class Cli
                 output.AppendLine("  AnalistaHub.exe --clear-cred <id>   apaga as credenciais guardadas da ferramenta");
                 output.AppendLine("  AnalistaHub.exe --validate-cred <id> confirma as credenciais no serviço");
                 output.AppendLine("  AnalistaHub.exe --check-tools       valida o catálogo (gatilho, script, campos)");
+                output.AppendLine("  AnalistaHub.exe --check-update      consulta o canal de atualização e imprime o resultado");
+                output.AppendLine("  AnalistaHub.exe --download-update   baixa e prepara a atualização (não aplica)");
+                output.AppendLine("  AnalistaHub.exe --apply-update      aplica a atualização preparada e reabre o app");
                 break;
 
             case "--check-tools":
@@ -280,6 +284,72 @@ public static class Cli
 
                 Write(output.ToString());
                 return result.Ok ? 0 : 1;
+            }
+
+            case "--check-update":
+            {
+                // Task.Run: o modo CLI roda no thread do WinUI, que tem SynchronizationContext —
+                // esperar um async direto nele trava (deadlock). Fora do contexto, não.
+                var result = Task.Run(() => UpdateService.CheckAsync()).GetAwaiter().GetResult();
+                UpdateService.LastCheck = result;
+                SettingsService.Current.LastUpdateCheckUtc = result.CheckedAtUtc.ToString("o");
+                SettingsService.Save();
+
+                output.AppendLine(Json(new
+                {
+                    ok = result.Ok,
+                    instalada = result.CurrentVersion,
+                    ultima = result.LatestVersion,
+                    atualizacao = result.HasUpdate,
+                    sha256 = result.Asset?.Sha256,
+                    url = result.Asset?.Url,
+                    tamanho = result.Asset?.Size,
+                    notas = result.Notes,
+                    mensagem = UpdateService.Describe(result),
+                    canal = UpdateService.FeedUrl,
+                    erro = result.Error
+                }, true));
+                Write(output.ToString());
+                return result.Ok ? 0 : 1;
+            }
+
+            case "--download-update":
+            {
+                var check = Task.Run(() => UpdateService.CheckAsync()).GetAwaiter().GetResult();
+                if (!check.HasUpdate) return Fail(output, UpdateService.Describe(check));
+
+                var destino = "";
+                try
+                {
+                    destino = Task.Run(() => UpdateService.DownloadAsync(check)).GetAwaiter().GetResult();
+                }
+                catch (Exception ex)
+                {
+                    return Fail(output, ex.Message);
+                }
+
+                output.AppendLine(Json(new
+                {
+                    ok = true,
+                    versao = check.LatestVersion,
+                    payload = destino,
+                    pendente = SettingsService.Current.PendingUpdateVersion
+                }, true));
+                Write(output.ToString());
+                return 0;
+            }
+
+            case "--apply-update":
+            {
+                var dir = UpdateService.PendingPayloadDir();
+                if (dir is null) return Fail(output, "nenhum pacote baixado esperando reinício");
+
+                if (!UpdateService.ApplyAndRestart(dir, out var erro)) return Fail(output, erro);
+
+                output.AppendLine(Json(new { ok = true, aplicar = dir, pasta = UpdateService.InstallDir }, true));
+                Write(output.ToString());
+                Environment.Exit(0);
+                return 0;
             }
         }
 

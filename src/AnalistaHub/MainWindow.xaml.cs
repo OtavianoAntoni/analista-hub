@@ -25,6 +25,7 @@ public sealed partial class MainWindow : Window
     private static readonly Dictionary<string, (bool ok, DateTime when)> ProbeCache = new();
     private Action<bool>? _armHotkeyCapture;
     private Action? _validateCurrentTool;
+    private Action? _runUpdateCheck;
     private bool _nudging;
 
     public MainWindow()
@@ -226,7 +227,21 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Abre Configurações e arma a captura do atalho (mesmo caminho do botão "Definir atalho").
+    /// Menu da bandeja → "Procurar atualização agora": abre Configurações e dispara a verificação
+    /// no mesmo gesto (o usuário vê o resultado, não só um clique sem retorno).
+    /// </summary>
+    public void CheckUpdatesNow()
+    {
+        NavigateTo("settings");
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try { _runUpdateCheck?.Invoke(); }
+            catch (Exception ex) { AppPaths.Log("CheckUpdatesNow: " + ex.Message); }
+        });
+    }
+
+    /// <summary>
+    /// Abre Configurações e arma a captura do atalho (mesmo caminho do botão Definir atalho).
     /// Usado por --arm-hotkey, que serve para testar a captura sem mouse.
     /// </summary>
     public void ArmHotkeyCapture()
@@ -1228,6 +1243,172 @@ public sealed partial class MainWindow : Window
         historyPanel.Children.Add(historyToggle);
         historyPanel.Children.Add(clearHistory);
         AddBlock("Histórico", historyPanel);
+
+        // atualizações
+        var updatePanel = new StackPanel { Spacing = 8 };
+        var updateVersion = Muted($"Versão instalada: v{UpdateService.CurrentVersion}");
+        var updateStatus = Muted("Ainda não verificado nesta sessão.");
+        var updateBar = new ProgressBar
+        {
+            Minimum = 0, Maximum = 100, Value = 0, Width = 360,
+            HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed
+        };
+
+        var updateRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        var checkNow = new Button
+        {
+            Content = "Procurar por atualização agora",
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"]
+        };
+        var installNow = new Button { Content = "Baixar e instalar", Visibility = Visibility.Collapsed };
+        var restartNow = new Button { Content = "Reiniciar e atualizar", Visibility = Visibility.Collapsed };
+        updateRow.Children.Add(checkNow);
+        updateRow.Children.Add(installNow);
+        updateRow.Children.Add(restartNow);
+
+        void RefreshUpdateState()
+        {
+            var last = UpdateService.LastCheck;
+            var pendingDir = UpdateService.PendingPayloadDir();
+
+            if (pendingDir is not null)
+            {
+                updateStatus.Text = $"Pacote v{App.Settings.PendingUpdateVersion} baixado. Reinicie para concluir a atualização.";
+                installNow.Visibility = Visibility.Collapsed;
+                restartNow.Visibility = Visibility.Visible;
+                return;
+            }
+
+            restartNow.Visibility = Visibility.Collapsed;
+
+            if (last is null)
+            {
+                updateStatus.Text = "Ainda não verificado nesta sessão.";
+                installNow.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                var when = last.CheckedAtUtc.ToLocalTime().ToString("dd/MM 'às' HH:mm");
+                updateStatus.Text = UpdateService.Describe(last) + $" (verificado em {when})";
+                installNow.Visibility = last.HasUpdate ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
+
+        async void RunUpdateCheck()
+        {
+            if (!checkNow.IsEnabled) return;   // já existe uma verificação em andamento
+            checkNow.IsEnabled = false;
+            installNow.Visibility = Visibility.Collapsed;
+            updateBar.IsIndeterminate = true;
+            updateBar.Visibility = Visibility.Visible;
+            updateStatus.Text = "Consultando o canal de atualização…";
+            try
+            {
+                var result = await UpdateService.CheckAsync();
+                UpdateService.LastCheck = result;
+                App.Settings.LastUpdateCheckUtc = result.CheckedAtUtc.ToString("o");
+                SettingsService.Save();
+            }
+            catch (Exception ex)
+            {
+                AppPaths.Log("update check (UI): " + ex);
+                updateStatus.Text = "Falha ao verificar: " + ex.Message;
+            }
+            finally
+            {
+                updateBar.IsIndeterminate = false;
+                updateBar.Visibility = Visibility.Collapsed;
+                checkNow.IsEnabled = true;
+                RefreshUpdateState();
+            }
+        }
+        _runUpdateCheck = RunUpdateCheck;
+
+        checkNow.Click += (_, _) => RunUpdateCheck();
+
+        installNow.Click += async (_, _) =>
+        {
+            var last = UpdateService.LastCheck;
+            if (last is null || !last.HasUpdate) return;
+
+            checkNow.IsEnabled = false;
+            installNow.IsEnabled = false;
+            updateBar.IsIndeterminate = false;
+            updateBar.Value = 0;
+            updateBar.Visibility = Visibility.Visible;
+
+            var progress = new Progress<double>(p =>
+            {
+                updateBar.Value = p * 100;
+                updateStatus.Text = p < 0.88
+                    ? $"Baixando a versão {last.LatestVersion}… {p:P0}"
+                    : $"Conferindo e extraindo… {p:P0}";
+            });
+
+            try
+            {
+                await UpdateService.DownloadAsync(last, progress);
+                updateStatus.Text = $"Versão {last.LatestVersion} baixada. Clique em \"Reiniciar e atualizar\".";
+                AppPaths.Log($"update: {last.LatestVersion} baixada pelo botão");
+            }
+            catch (Exception ex)
+            {
+                AppPaths.Log("update download (UI): " + ex);
+                updateStatus.Text = "Não foi possível baixar: " + ex.Message;
+            }
+            finally
+            {
+                updateBar.Visibility = Visibility.Collapsed;
+                installNow.IsEnabled = true;
+                checkNow.IsEnabled = true;
+                RefreshUpdateState();
+            }
+        };
+
+        restartNow.Click += (_, _) =>
+        {
+            var dir = UpdateService.PendingPayloadDir();
+            if (dir is null)
+            {
+                updateStatus.Text = "O pacote baixado não está mais disponível. Procure novamente.";
+                RefreshUpdateState();
+                return;
+            }
+
+            restartNow.IsEnabled = false;
+            if (!UpdateService.ApplyAndRestart(dir, out var error))
+            {
+                updateStatus.Text = error;
+                restartNow.IsEnabled = true;
+                return;
+            }
+
+            updateStatus.Text = "Reiniciando para aplicar a atualização…";
+            App.ExitForUpdate();
+        };
+
+        var autoCheckToggle = new ToggleSwitch
+        {
+            Header = "Procurar automaticamente (1x por dia)",
+            IsOn = App.Settings.AutoCheckUpdates,
+            OnContent = "ligado",
+            OffContent = "desligado"
+        };
+        autoCheckToggle.Toggled += (_, _) =>
+        {
+            App.Settings.AutoCheckUpdates = autoCheckToggle.IsOn;
+            SettingsService.Save();
+        };
+
+        updatePanel.Children.Add(updateVersion);
+        updatePanel.Children.Add(updateRow);
+        updatePanel.Children.Add(updateBar);
+        updatePanel.Children.Add(updateStatus);
+        updatePanel.Children.Add(autoCheckToggle);
+        updatePanel.Children.Add(Muted("Canal: " + UpdateService.FeedUrl));
+        updatePanel.Children.Add(Muted("A troca de versão fecha o app, substitui a pasta do programa e abre de novo. Se a versão nova não abrir, a anterior volta sozinha."));
+        AddBlock("Atualizações", updatePanel);
+        RefreshUpdateState();
 
         // sobre
         var about = new StackPanel { Spacing = 6 };

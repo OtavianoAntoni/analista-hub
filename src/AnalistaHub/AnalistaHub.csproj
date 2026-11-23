@@ -20,7 +20,7 @@
     <EnableMsixTooling>false</EnableMsixTooling>
     <PublishReadyToRun>false</PublishReadyToRun>
     <WindowsSdkPackageVersion>10.0.19041.57</WindowsSdkPackageVersion>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Company>Analista Hub</Company>
     <Product>Analista Hub</Product>
   </PropertyGroup>

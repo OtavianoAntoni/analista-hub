@@ -39,15 +39,47 @@ O `publish.ps1` copia os recursos XAML compilados (`.xbf`/`.pri`) que o `dotnet 
 src/AnalistaHub/            aplicação (C# + XAML)
   Models/ToolManifest.cs    contrato do manifesto de ferramenta
   Services/                 catálogo, executor, credenciais, hotkey, bandeja, diagnóstico
+  Services/UpdateService.cs canal de atualização (manifesto, download, troca de pasta)
   Views/                    HUD de comando, painel da Consulta SSE e aviso de resultado
   tools/*.json              manifestos embutidos
   data/*.json               bases locais das ferramentas do tipo "dataset"
 build/publish.ps1           gera dist/AnalistaHub (self-contained, enxuga idiomas)
+build/package-release.ps1   gera dist/release (zip + sha256 + latest.json) para publicar
+.github/workflows/release.yml  publica a release ao empurrar uma tag v*
 launcher/                   .cmd de duplo clique (copiado para o dist)
 docs/FERRAMENTA-CONSULTA-SSE.md  spec da ferramenta de consulta de cidades
 SPEC.md                     comportamento especificado (fonte de verdade do produto)
 ENTREGA.md                  passagem para a sessão que empacota/instala
 ```
+
+## Atualização automática
+
+O app consulta **uma vez por dia** o manifesto da última release
+
+```
+https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+```
+
+e, se houver versão maior que a instalada, avisa (uma vez por versão) e oferece instalar em
+**Configurações → Atualizações** — o mesmo comando está no menu da bandeja como
+**Procurar atualização agora**. O pacote é conferido por SHA-256 antes de qualquer coisa, e a troca
+de versão fecha o app, substitui a pasta e reabre; se a versão nova não subir, a anterior volta.
+
+Publicar uma versão nova:
+
+```bash
+# 1. suba a versão no csproj e commite
+# 2. crie a tag — o workflow builda, empacota e publica
+git tag v0.2.1 && git push origin v0.2.1
+```
+
+Para gerar o pacote à mão (sem CI): `powershell -File build\package-release.ps1 -Version 0.2.1`
+e suba `dist\release\{*.zip, *.sha256, latest.json}` numa release do GitHub.
+
+O canal precisa ser **legível sem autenticação**: em repositório privado o manifesto responde 404.
+Nesse caso use `UpdateFeedUrl` (em `settings.json`) apontando para um endereço interno, ou publique
+os artefatos num repositório público só de releases.
+
 
 ## Ferramenta de base local (`kind: "dataset"`)
 

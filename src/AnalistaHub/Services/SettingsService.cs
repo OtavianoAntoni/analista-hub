@@ -26,6 +26,18 @@ public sealed class AppSettings
     public string LastPage { get; set; } = "home";
     /// <summary>Painel da Consulta SSE: mostra NM/OLT/VPN? (botão de alternância "NMs").</summary>
     public bool SseShowNodes { get; set; } = true;
+
+    // ---- atualizações ----
+    /// <summary>Procurar atualização sozinho, no máximo uma vez por dia.</summary>
+    public bool AutoCheckUpdates { get; set; } = true;
+    /// <summary>ISO-8601 UTC da última verificação (inclusive a automática).</summary>
+    public string LastUpdateCheckUtc { get; set; } = "";
+    /// <summary>Canal alternativo; vazio = releases do repositório oficial.</summary>
+    public string UpdateFeedUrl { get; set; } = "";
+    /// <summary>Versão já avisada por aviso flutuante — evita repetir o mesmo aviso todo dia.</summary>
+    public string NotifiedUpdateVersion { get; set; } = "";
+    /// <summary>Versão baixada e extraída, esperando reinício para trocar a pasta.</summary>
+    public string PendingUpdateVersion { get; set; } = "";
 }
 
 public static class AppPaths
@@ -39,6 +51,8 @@ public static class AppPaths
     public static string BuiltinToolsDir => Path.Combine(AppContext.BaseDirectory, "tools");
     public static string IconFile => Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
     public static string LogFile => Path.Combine(DataDir, "hub.log");
+    /// <summary>Pacotes baixados e o script que troca a pasta do programa.</summary>
+    public static string UpdateDir => Path.Combine(DataDir, "update");
 
     public static void Ensure()
     {
