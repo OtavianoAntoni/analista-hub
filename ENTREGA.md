@@ -41,9 +41,12 @@ Atalhos de Analista/
 ```
 
 Ferramenta **Consulta SSE** (`:sse`): a base vai embutida em `dist\AnalistaHub\data\sse-cidades.json`
-(23 KB, 161 cidades). Nada é consultado na rede. Para atualizar os dados **sem reinstalar**, o
-instalador (ou o analista) copia o novo `sse-cidades.json` para `%LOCALAPPDATA%\AnalistaHub\` — esse
-caminho tem precedência sobre o embutido. Spec: `docs/FERRAMENTA-CONSULTA-SSE.md`.
+(schema 3, 492 KB — 5577 cidades: 161 com NM/OLT/VPN e o resto só cadastro). Nada é consultado na
+rede. Para atualizar os dados **sem reinstalar**, o instalador (ou o analista) copia o novo
+`sse-cidades.json` para `%LOCALAPPDATA%\AnalistaHub\` — esse caminho tem precedência sobre o embutido.
+Gerar/regerar: `build_merge.py` em `Documents\Network\ANATEL Tarifacao\_build`
+(planilhas do SSE + cadastro de municípios da ANATEL).
+Spec: `docs/FERRAMENTA-CONSULTA-SSE.md`.
 
 Saída de dados do app (nunca dentro da pasta do programa):
 

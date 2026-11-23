@@ -22,6 +22,8 @@ public sealed class AppSettings
     public Dictionary<string, string> TriggerOverrides { get; set; } = new();
     /// <summary>Último resultado conhecido da validação de credencial (id -> "estado|quando|mensagem").</summary>
     public Dictionary<string, string> AuthStatus { get; set; } = new();
+    /// <summary>Painel da Consulta SSE: mostra NM/OLT/VPN? (botão de alternância "NMs").</summary>
+    public bool SseShowNodes { get; set; } = true;
 }
 
 public static class AppPaths

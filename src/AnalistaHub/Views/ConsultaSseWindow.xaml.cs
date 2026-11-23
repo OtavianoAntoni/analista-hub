@@ -25,35 +25,53 @@ public sealed class SseLineRow
 /// <summary>Cartão de uma cidade na lista de resultados.</summary>
 public sealed class SseCityRow
 {
-    public SseCityRow(SseCity city)
+    public SseCityRow(SseCity city, bool showNodes)
     {
         Source = city;
         Name = city.Name;
         Uf = city.Uf;
         Sigla = city.Sigla;
-        Rows = city.Rows.Select(r => new SseLineRow(r)).ToList();
+        HasAccess = city.HasAccess;
+
+        // o botão "NMs" só decide se as redes são materializadas na lista
+        Rows = showNodes && city.HasAccess
+            ? city.Rows.Select(r => new SseLineRow(r)).ToList()
+            : new List<SseLineRow>();
+
+        NodesVisibility = Rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        NoNodesVisibility = city.HasAccess ? Visibility.Collapsed : Visibility.Visible;
     }
 
     public SseCity Source { get; }
     public string Name { get; }
     public string Uf { get; }
     public string Sigla { get; }
+    public bool HasAccess { get; }
     public List<SseLineRow> Rows { get; }
+    public Visibility NodesVisibility { get; }
+    public Visibility NoNodesVisibility { get; }
 }
 
 /// <summary>
-/// Painel da Consulta SSE: digitar a cidade e copiar Sigla Anatel + NM + OLT + VPN.
+/// Painel da Consulta: digitar a cidade e copiar Sigla Anatel + estado + NM/OLT/VPN.
 /// Mesmo comportamento de janela da HUD (sem moldura, no topo, Esc fecha), porque a
 /// consulta é feita no meio de um atendimento e não pode roubar o fluxo do analista.
+///
+/// O botão "NMs" do cabeçalho oculta as informações de acesso (NM · OLT · VPN) para
+/// deixar a lista limpa; a escolha fica gravada e volta na próxima abertura.
 /// </summary>
 public sealed partial class ConsultaSseWindow : Window
 {
     private const double WidthDip = 780;
     private const double HeightDip = 580;
+    /// <summary>Teto de cartões montados por busca — a base nacional tem 5577 cidades.</summary>
+    private const int MaxRows = 300;
 
     private readonly ObservableCollection<SseCityRow> _rows = new();
     private DateTime _shownAt = DateTime.MinValue;
     private bool _suppressHide;
+    private bool _showNodes = true;
+    private bool _syncToggle;
 
     public ConsultaSseWindow()
     {
@@ -68,6 +86,11 @@ public sealed partial class ConsultaSseWindow : Window
         SearchBox.KeyDown += OnSearchKeyDown;
         ResultsList.ItemClick += (_, e) => { if (e.ClickedItem is SseCityRow row) Copy(row); };
         Activated += OnActivated;
+
+        _showNodes = SettingsService.Current.SseShowNodes;
+        NmsToggle.IsChecked = _showNodes;   // antes de assinar: não dispara evento
+        NmsToggle.Checked += OnNmsToggleChanged;
+        NmsToggle.Unchecked += OnNmsToggleChanged;
     }
 
     // ------------------------------------------------------------------ ciclo de vida
@@ -79,11 +102,17 @@ public sealed partial class ConsultaSseWindow : Window
             var catalog = SseCatalog.Current;
 
             HeaderInfo.Text = catalog.Loaded
-                ? $"{catalog.Cities.Count} cidades · {catalog.TotalLines} linhas · base de {catalog.Generated}"
+                ? $"{catalog.Cities.Count} cidades · {catalog.TotalWithAccess} com NM · base de {catalog.Generated}"
                 : "base indisponível";
             SourceText.Text = catalog.Loaded
                 ? "fonte: " + catalog.DataPath
                 : catalog.Error ?? "";
+
+            // a preferência pode ter mudado em outra janela do app
+            _syncToggle = true;
+            _showNodes = SettingsService.Current.SseShowNodes;
+            NmsToggle.IsChecked = _showNodes;
+            _syncToggle = false;
 
             SearchBox.Text = query ?? "";
             Refresh();
@@ -136,8 +165,10 @@ public sealed partial class ConsultaSseWindow : Window
         var previous = (ResultsList.SelectedItem as SseCityRow)?.Source.Name;
 
         var matches = catalog.Search(term);
+        var mostrados = matches.Count > MaxRows ? matches.Take(MaxRows).ToList() : matches;
+
         _rows.Clear();
-        foreach (var city in matches) _rows.Add(new SseCityRow(city));
+        foreach (var city in mostrados) _rows.Add(new SseCityRow(city, _showNodes));
 
         var empty = _rows.Count == 0;
         ResultsList.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
@@ -154,9 +185,24 @@ public sealed partial class ConsultaSseWindow : Window
 
         var keep = previous is null ? null : _rows.FirstOrDefault(r => r.Source.Name == previous);
         ResultsList.SelectedItem = keep ?? _rows[0];
-        StatusText.Text = term.Length == 0
-            ? $"{_rows.Count} cidades · digite para filtrar"
-            : $"{_rows.Count} resultado(s)";
+
+        StatusText.Text = matches.Count > mostrados.Count
+            ? $"mostrando {mostrados.Count} de {matches.Count} · refine a busca"
+            : term.Length == 0
+                ? $"{_rows.Count} cidades · digite para filtrar"
+                : $"{_rows.Count} resultado(s)";
+    }
+
+    /// <summary>Botão "NMs": liga/desliga as informações de acesso e grava a preferência.</summary>
+    private void OnNmsToggleChanged(object sender, RoutedEventArgs e)
+    {
+        if (_syncToggle) return;
+        _showNodes = NmsToggle.IsChecked == true;
+        SettingsService.Current.SseShowNodes = _showNodes;
+        SettingsService.Save();
+        Refresh();
+        SearchBox.Focus(FocusState.Programmatic);
+        AppPaths.Log($"ConsultaSse: NMs {(_showNodes ? "visíveis" : "ocultos")}");
     }
 
     private void OnSearchKeyDown(object sender, KeyRoutedEventArgs e)
@@ -192,14 +238,17 @@ public sealed partial class ConsultaSseWindow : Window
 
     private void Copy(SseCityRow row)
     {
+        // o texto copiado sempre leva o que existe, mesmo com o botão "NMs" desligado
         var text = SseCatalog.Format(row.Source);
         if (!ClipboardService.SetText(text)) AppPaths.Log("ConsultaSse: clipboard falhou");
 
-        var subtitle = $"copiado · Sigla Anatel {row.Sigla} · {row.Rows.Count} rede(s)";
+        var subtitle = row.HasAccess
+            ? $"copiado · Sigla Anatel {row.Sigla} · {row.Source.Rows.Count} rede(s)"
+            : $"copiado · Sigla Anatel {row.Sigla} · somente cadastro";
         HidePanel();
         ToastController.ShowMessage("Consulta SSE", $"{row.Name} ({row.Uf})", subtitle);
 
-        AppPaths.Log($"ConsultaSse: copiado {row.Name}/{row.Uf} ({row.Rows.Count} linha(s))");
+        AppPaths.Log($"ConsultaSse: copiado {row.Name}/{row.Uf} ({row.Source.Rows.Count} linha(s))");
     }
 }
 

@@ -447,12 +447,14 @@ public sealed partial class MainWindow : Window
             var data = new StackPanel { Spacing = 8 };
             data.Children.Add(KeyValue("Arquivo", catalog.DataPath));
             data.Children.Add(KeyValue("Conteúdo", catalog.Loaded
-                ? $"{catalog.Cities.Count} cidades · {catalog.TotalLines} linhas NM/OLT/VPN · base de {catalog.Generated}"
+                ? $"{catalog.Cities.Count} cidades · {catalog.TotalWithAccess} com NM/OLT/VPN · " +
+                  $"{catalog.TotalLines} linhas · base de {catalog.Generated}"
                 : catalog.Error ?? "base não carregada"));
             if (catalog.Sources.Count > 0)
                 data.Children.Add(KeyValue("Origem", string.Join("   ·   ", catalog.Sources.Select(s => s.File))));
-            data.Children.Add(Muted("Nada é consultado na rede: os dados ficam neste arquivo. Para atualizar, regenere a base " +
-                                    "com build_sse.py e copie o JSON para a pasta de dados do Hub."));
+            data.Children.Add(Muted("Nada é consultado na rede: os dados ficam neste arquivo (planilhas do SSE + " +
+                                    "cadastro de municípios da ANATEL). Para atualizar, rode build_merge.py e copie o " +
+                                    "JSON para a pasta de dados do Hub."));
             AddBlock("Base de dados", data);
         }
 

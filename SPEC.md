@@ -32,7 +32,7 @@ Nome do produto: **Analista Hub** (decisão de projeto). Executável: `AnalistaH
 |---|---|---|---|
 | SN de RB pelo IP (gatilho `:mkt`) | IPv4 (ou CIDR `/32`); vazio = clipboard | SN + `1`, ou `0` se o IP não está no inventário | Inventário "Inventário" (HTTP :3113) + credenciais do cofre (seção 5) |
 | Fabricante pelo MAC (gatilho `:macv`/`:macc`/`:mact`) | MAC (qualquer separador; 6 primeiros hex); vazio = clipboard | Nome do fabricante | `api.macvendors.com` (HTTPS) |
-| Consulta SSE (gatilho `:sse`) | cidade (nome, sigla Anatel ou UF) | Sigla Anatel + NM + OLT + VPN de todas as redes da cidade; painel próprio, `Enter` copia | base local `data/sse-cidades.json` (sem rede, sem credencial) |
+| Consulta SSE (gatilho `:sse`) | cidade (nome, sigla Anatel ou UF) | Sigla Anatel + estado + NM/OLT/VPN quando houver; botão **NMs** oculta as informações de acesso; painel próprio, `Enter` copia | base local `data/sse-cidades.json` — planilhas do SSE + cadastro de municípios da ANATEL (sem rede, sem credencial) |
 
 Campos e comportamento vêm dos scripts já existentes (evidência: `mkt_serial.ps1`,
 `mac_vendor.ps1`). Nada neles é reescrito nesta entrega: o HUB os **chama** e apresenta o

@@ -220,6 +220,7 @@ public static class Cli
                         tipo = "dataset",
                         base_local = sse.DataPath,
                         cidades_na_base = sse.Cities.Count,
+                        cidades_com_nm = sse.TotalWithAccess,
                         linhas = sse.TotalLines,
                         gerado_em = sse.Generated,
                         entrada = value,
@@ -229,6 +230,8 @@ public static class Cli
                             cidade = c.Name,
                             uf = c.Uf,
                             sigla_anatel = c.Sigla,
+                            acesso = c.HasAccess,
+                            origem = c.Origin,
                             redes = c.Rows.Select(r => new { nm = r.Nm, olt = r.Olt, vpn = r.Vpn })
                         }),
                         valor = formatted,

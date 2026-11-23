@@ -1,106 +1,138 @@
-# SPEC — Ferramenta "Consulta SSE" no Analista Hub
+# SPEC — Ferramenta "Consulta SSE" (cidade → Sigla Anatel, estado, NM/VPN)
 
-Status: **pronta para implementação, bloqueada por decisão do dono** (outra sessão está
-alterando o projeto do HUB; nada foi modificado em `Atalhos de Analista`).
-Base de dados compilada e protótipo validados nesta pasta (`_build/`).
+Versão 2.0 · Implementada em `Services/SseCatalog.cs` + `Views/ConsultaSseWindow.*`
+Base de dados: `data/sse-cidades.json` (schema 3), gerada por
+`Documents\Network\ANATEL Tarifacao\_build\build_merge.py`.
 
 ---
 
 ## 1. Objetivo
 
-Dado o nome de uma **cidade**, devolver na hora:
+Um único campo de busca onde o analista digita **cidade, sigla Anatel ou UF** e recebe:
 
-| Campo exibido | Origem no CSV |
+| Campo exibido | Origem |
 |---|---|
-| **Sigla Anatel** | `SIGLA ANATEL` |
-| **NM** | `NMSs` (renomeado) |
-| **OLT** | `MODELO OLT` (renomeado) |
-| **VPN** | `VPN PARA NMEs` (renomeado) |
+| **Sigla Anatel** | ANATEL (oficial) — cai para a planilha SSE quando a cidade não está no cadastro da ANATEL |
+| **Estado** (UF) | ANATEL / planilha SSE |
+| **NM · OLT · VPN** | planilha CONSULTA SSE — só existe nas cidades onde temos OLT |
 
-Uma cidade pode ter **várias combinações** NM/OLT/VPN (19 das 161 cidades). Todas são
-exibidas juntas, na mesma cidade.
+Uma cidade pode ter **várias combinações** NM/OLT/VPN — todas aparecem juntas.
+Cidade que só existe no cadastro da ANATEL aparece com sigla e estado, marcada
+`somente cadastro · sem NM`.
 
-Fonte única e exclusiva: `Documents\Network\CONSULTA SSE\*.csv` (7 arquivos, um por UF).
-Nada de rede, VPN, credencial ou API. A ferramenta funciona 100% offline.
+**Decisão de produto:** uma ferramenta só, não duas. Consulta por cidade resolve o caminho
+inteiro (cadastro + acesso), sem o analista ter de lembrar qual base consultar.
 
-## 2. Base compilada (já pronta)
+## 2. Base de dados (schema 3)
 
-`_build/sse-cidades.json` — 23 KB, gerado por `_build/build_sse.py`:
+`data/sse-cidades.json` — 492 KB, gerado por `build_merge.py` a partir de duas fontes:
 
-- 183 linhas lidas → 2 duplicatas exatas colapsadas → **181 registros** → **161 cidades**.
-- Formato: `{schema, generated, total_cidades, total_linhas, sources[], cidades[]}`,
-  cada cidade `{n, k, uf, sigla, rows:[{nm, olt, vpn}]}`.
-- `k` = nome sem acento em maiúsculas → busca O(1) por substring, sem normalizar em tempo de uso.
-- `sources[]` guarda nome, linhas, encoding e SHA-256 de cada CSV → rastreabilidade.
+| Fonte | Linhas | Papel |
+|---|---|---|
+| `CONSULTA SSE` (7 planilhas, uma por UF) | 161 cidades | NM, OLT e VPN de cada rede |
+| `ANATEL-areas-tarifacao-municipios.csv` | 5564 municípios | sigla oficial + estado |
 
-**Custo de hardware:** ~24 KB residentes, carga única na inicialização (<5 ms),
-busca em memória sobre 161 itens (abaixo de 1 ms). Sem processo, sem porta, sem serviço.
+Junção por **nome normalizado + UF** (mesma `Text.Fold` do app):
+
+- cidade nas duas fontes → 1 registro, com redes e sigla oficial;
+- cidade só na SSE (13: regiões do DF como CEILANDIA/TAGUATINGA, mais BOTICÃO/MG,
+  MONTE SANTO/MG, PRESIDENTE DUTRA/MG, TERMÓPOLIS/MG e NOVA PONTE/MS) → mantém a sigla
+  da planilha, porque na ANATEL essas localidades não são município;
+- cidade só na ANATEL (5416) → entra com sigla e estado, `rows` vazio.
+
+Resultado: **5577 cidades, 161 com NM, 181 linhas de acesso**.
+
+`src` no registro diz a origem (`sse` | `anatel`). Quando a sigla da planilha divergia da
+oficial, o JSON guarda `sigla_sse` (auditoria) e a ferramenta exibe a da ANATEL —
+dois casos corrigidos: `PRATÁPOLIS/MG` (estava com o nome da cidade na coluna da sigla,
+virou `PRO`) e `JUSSARA/PR` (estava com a sigla de JUSSARA/GO, virou `JSA`).
+
+Custo: carga única no arranque; busca em memória sobre 5577 itens.
 
 ### Atualização dos dados
-Quando a planilha mudar: `python build_sse.py` (regenera o JSON e o `INDEX.md`).
-Cabeçalho é localizado pela célula `SIGLA ANATEL`, não por número de linha — sobrevive a
-linhas inseridas no topo da planilha.
 
-## 3. Comportamento esperado no HUB
+Rodar `build_merge.py` e copiar o JSON para `%LOCALAPPDATA%\AnalistaHub\sse-cidades.json`
+(vence o embutido no pacote) — não precisa reinstalar o Hub.
 
-**Decisão de projeto:** a ferramenta não é um "script que devolve um valor" — ela tem um
-passo interativo (escolher a cidade entre os resultados). Por isso entra como **ferramenta
-com painel próprio**, reaproveitando o visual do HUD, e não pelo caminho
-`script`/`interpreter` do manifesto.
+## 3. Comportamento
 
 ### 3.1 Chamada
-- Gatilho no HUD: `:sse` (aceita `:ss`, `sse`) e pelo nome "Consulta SSE".
-- Também aparece como card na janela principal, categoria **SSE**.
-- Não exige configuração nem credencial: nenhuma seção "Configurações".
+- Gatilho `:sse` (aceita `:ss`, `sse`) e o nome "Consulta SSE".
+- Card na janela principal, categoria **SSE**; item no menu da bandeja.
+- `AnalistaHub.exe --sse [termo]` abre o painel já com a busca preenchida (diagnóstico).
+- Sem configuração e sem credencial.
 
 ### 3.2 Busca
-- Campo único, foco automático, **lista tudo** (161 cidades) enquanto vazio.
-- Filtro incremental, insensível a caixa e acento, com prioridade:
-  1. cidade começa com o termo → 2. termo no meio do nome → 3. sigla Anatel
-  4. dentro da UF (ex.: `mg`) → 5. resto.
-- `↑`/`↓` navega, `Enter` copia, `Esc` fecha. Clique também copia.
-- Rodapé mostra `posição/total` ou "sem resultado".
+Campo único, foco automático, filtro incremental insensível a caixa e acento. Prioridade:
+
+1. nome idêntico (com acento) · 2. nome idêntico sem acento · **3. UF digitada sozinha
+(ex.: `MG` = consulta por estado)** · 4. nome começa com · 5. termo no meio do nome ·
+6. começa com a sigla · 7. começa com a UF.
+
+Empate: **cidade com NM/OLT/VPN primeiro** e depois ordem alfabética. Assim
+`TAGUATINGA` mostra a do DF (com redes) antes da do TO (só cadastro), e `MG` lista
+Minas Gerais antes de MAGÉ/RJ.
+
+A lista mostra no máximo **300 cartões** por busca (a base tem 5577); o rodapé diz
+`mostrando 300 de N — refine a busca`. `↑`/`↓` navega, `Enter` copia, `Esc` fecha.
 
 ### 3.3 Cartão de resultado
-`CIDADE` + badge `UF` + badge destacado `SIGLA ANATEL`; abaixo, uma linha por combinação:
-`NM | OLT | VPN`. Cidades com múltiplas combinações mostram todas as linhas.
+`CIDADE` + badge `UF` + badge destacado `SIGLA ANATEL`; abaixo, uma linha por rede com
+`NM | OLT | VPN`. Cidade sem planilha de OLT mostra `somente cadastro · sem NM`.
 
-### 3.4 Texto copiado (contrato estável)
+### 3.4 Botão "NMs" (toggle)
+No cabeçalho, à direita do título. Liga e desliga a exibição das **informações de acesso**
+(NM · OLT · VPN) de todos os cartões, para deixar a tela limpa em atendimento.
+
+- estado **ligado** = mostra as redes (padrão de fábrica);
+- estado **desligado** = o cartão fica em cidade + UF + sigla;
+- a escolha é gravada em `settings.json` (`SseShowNodes`) e volta na próxima abertura;
+- o texto **copiado não muda** com o botão: cópia sempre o que existe (sigla + redes).
+
+### 3.5 Texto copiado (contrato estável)
+
+Cidade com redes:
 ```
 TAGUATINGA (DF) — Sigla Anatel: TAGA
 NM: NCE GESTOR-A | OLT: REDE-INTERNA | VPN: VPN OPERADORA-A / CLICK
 NM: AMS OPERADORA-A | OLT: REDE-INTERNA | VPN: VPN OPERADORA-A
 NM: NETNUMEN OPERADORA-A | OLT: ZTE | VPN: VPN OPERADORA-A
 ```
-Uma linha de cabeçalho + uma linha por combinação. É o que vai para a área de transferência.
 
-## 4. Integração técnica (para a sessão que estiver no projeto)
+Cidade só com cadastro:
+```
+ALUMINIO (SP) — Sigla Anatel: AMIO
+Sem NM cadastrado para esta cidade.
+```
 
-1. Copiar `sse-cidades.json` para `src/AnalistaHub/data/` e marcar
-   `CopyToOutputDirectory=PreserveNewest` no `.csproj`.
-2. Carregar uma vez (singleton) na inicialização; nunca reler a cada busca.
-3. Nova view `Views/ConsultaSsePanel.xaml` (mesmo tema do `CommandHud`), aberta pelo gatilho.
-4. Registrar o tool id `consulta-sse` no `ToolCatalog` com `kind: "dataset"` (sem
-   `script`/`interpreter`), para que `ToolRunner` não tente executar processo.
-5. Nenhuma alteração em `mkt-serial.json` / `mac-vendor.json`.
+## 4. Integração técnica
 
-**Ponto de atenção:** se a arquitetura atual só aceita manifesto com `script`, é preciso
-um `kind` novo — os arquivos `.json` de manifesto continuam valendo para as ferramentas
-existentes (a promessa "nova ferramenta entra copiando um .json" segue verdadeira para
-ferramentas de script).
+1. JSON em `src/AnalistaHub/data/sse-cidades.json`, `CopyToOutputDirectory=PreserveNewest`.
+2. `SseCatalog.Current` carrega uma vez (singleton); `--sse` não recarrega a cada busca.
+3. `Views/ConsultaSseWindow.xaml` — cabeçalho com o `ToggleButton NmsToggle`.
+4. Tool id `consulta-sse`, `kind: "dataset"` (sem `script`/`interpreter`).
+5. `AppSettings.SseShowNodes` guarda a preferência do botão.
 
-## 5. Verificação já executada
+## 5. Verificação executada
 
 | Prova | Comando | Resultado |
 |---|---|---|
-| Compilação da base | `python build_sse.py` | 7 arquivos, 183 linhas, 2 duplicatas, 161 cidades, 23 KB |
-| Estrutura do JSON | inspeção das 3 primeiras cidades + `TAGUATINGA` | 3 combinações em TAGUATINGA |
-| Busca (código real do protótipo) | `node test_busca.js` | 8/8 casos OK |
-| Render | protótipo aberto no painel de preview | 161 cidades listadas com NM/OLT/VPN |
+| Compilação | `dotnet build -c Release` | 0 erro, 0 aviso |
+| Gate de catálogo | `build/publish.ps1` → `--check-tools` | `ok: true`, 3 ferramentas, 0 problemas |
+| Base carregada | `AnalistaHub.exe --test consulta-sse TAGUATINGA` | 5577 cidades, 161 com NM |
+| Ordem com acesso primeiro | idem | TAGUATINGA/DF (TAGA, com NM) antes de TAGUATINGA/TO (TGG, sem NM) |
+| Consulta por estado | `--test consulta-sse MG` | 875 resultados, mineiras primeiro |
+| Cidade só cadastro | `--test consulta-sse ALUMINIO` | AMIO, `acesso: false`, `origem: anatel` |
+| Sigla corrigida | `--test consulta-sse PRATAPOLIS` | `PRO` (a planilha dizia `PRATAPOLIS`) |
+| Sede ausente no cadastro | `--test consulta-sse JUSSARA` | JSA/PR (com NM), JSS/BA, JUS/GO |
 
 ## 6. Aberto / limitações
 
-- Planilha é manual: cidade nova ou troca de OLT só aparece após rodar `build_sse.py`.
-- Sigla Anatel não é validada contra fonte externa (não há fonte no diretório).
-- Duas linhas idênticas foram descartadas (não muda o que o usuário vê).
-- Busca por UF e por sigla é decisão de projeto, não pedido explícito.
+- O clique no botão "NMs" **não foi verificado visualmente**: `cua-driver` respondeu
+  "Connection closed" e a captura de janela por script não foi autorizada. O caminho do
+  estado (preferência → `_showNodes` → cartões) está compilado e é o mesmo usado ao abrir
+  o painel; falta a confirmação com o app na tela.
+- A junção é por nome + UF: cidade grafada de forma diferente nas duas fontes não casa e
+  aparece em dois registros (um com NM, outro só cadastro).
+- As 13 cidades da SSE sem par na ANATEL não têm sigla oficial para conferir.
+- Planilha do SSE é manual: OLT nova só aparece depois de rodar `build_merge.py`.
