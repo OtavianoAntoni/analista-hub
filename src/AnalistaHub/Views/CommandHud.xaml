@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="AnalistaHub.Views.CommandHud"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid x:Name="RootGrid" Background="{StaticResource HubHudBackground}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- campo de busca -->
+        <Grid Grid.Row="0" Padding="18,16,18,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <FontIcon x:Name="SearchIcon" Glyph="&#xE721;" FontSize="18" Margin="0,0,12,0"
+                      VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBox x:Name="SearchBox" Grid.Column="1" BorderThickness="0" Background="Transparent"
+                     FontSize="20" PlaceholderText="Buscar ferramenta, gatilho ou descrição…" />
+        </Grid>
+
+        <!-- lista de resultados -->
+        <ListView x:Name="ResultsList" Grid.Row="1" Margin="8,0,8,6" SelectionMode="Single"
+                  IsItemClickEnabled="True" MaxHeight="420">
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Padding="10,7">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="34" Height="34" CornerRadius="9" Background="#1AFFFFFF">
+                            <FontIcon Glyph="{Binding Icon}" FontSize="16" HorizontalAlignment="Center"
+                                      VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14" />
+                            <TextBlock Text="{Binding Description}" FontSize="12" MaxLines="1"
+                                       TextTrimming="CharacterEllipsis"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="2" Text="{Binding Trigger}" FontFamily="Consolas" FontSize="12"
+                                   VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+
+        <!-- campos da ferramenta escolhida -->
+        <StackPanel x:Name="FieldsPanel" Grid.Row="2" Margin="18,0,18,8" Spacing="6" Visibility="Collapsed" />
+
+        <!-- faixa de erro -->
+        <Border x:Name="ErrorBanner" Grid.Row="3" Margin="14,0,14,8" Padding="14,10" CornerRadius="8"
+                Background="#33FF5C5C" Visibility="Collapsed">
+            <StackPanel Spacing="8">
+                <TextBlock x:Name="ErrorText" TextWrapping="Wrap" FontSize="13" IsTextSelectionEnabled="True" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="RetryButton" Content="Tentar de novo" Click="OnRetryClick" />
+                    <Button x:Name="ProbeButton" Content="Verificar conexão" Click="OnProbeClick"
+                            Visibility="Collapsed" />
+                    <Button x:Name="CopyDetailButton" Content="Copiar detalhe" Click="OnCopyDetailClick" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- rodapé -->
+        <Grid Grid.Row="4" Padding="18,0,18,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <ProgressRing x:Name="BusyRing" Width="16" Height="16" IsActive="False"
+                          Foreground="{StaticResource HubAccentBrush}" />
+            <TextBlock x:Name="StatusText" Grid.Column="1" Margin="10,0,10,0" FontSize="12"
+                       VerticalAlignment="Center" TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock Grid.Column="2" Text="↑↓ navegar · Enter executar · Esc fechar" FontSize="11"
+                       VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+        </Grid>
+    </Grid>
+</Window>
