@@ -115,14 +115,30 @@ Layout estilo PowerToys: navegação à esquerda, conteúdo à direita.
 - **Página da ferramenta** — quatro blocos, espelhando exatamente os quatro itens do `IDEA.md`:
   1. **Para que serve** — descrição em linguagem de operação.
   2. **Como executar** — gatilho, atalho global, exemplo de uso, duração típica.
-  3. **Configurações e credenciais** — campos editáveis + estado de cada requisito
-     (credencial encontrada/ausente, serviço alcançável, cache de token válido), com botões
-     **Testar conexão** e **Abrir cofre**. Segredo nunca é exibido, só o estado.
+  3. **Configurações e credenciais** — três partes na mesma aba:
+     - **Gatilho da ferramenta**, editável (ex.: `:mkt` → `:sn`), salvo ao sair do campo ou pelo
+       botão "Salvar"; passa a valer na busca do HUD e nos cartões.
+     - **Entrada da consulta** (o que o script recebe), em modo leitura.
+     - **Credenciais digitáveis** (usuário/senha), gravadas **automaticamente** ao sair do campo e
+       também por um botão "Salvar credenciais". O usuário **não** informa caminho de arquivo.
+       Estado visível: "credenciais salvas e cifradas" ou "faltando: Senha". Botão "Apagar" remove.
+     - Botão **Testar conexão** e o endereço do serviço. Segredo nunca é exibido em texto.
   4. **Como o resultado é apresentado** — escolha do modo de saída (Digitar / Copiar / Só avisar)
      e o que exatamente é copiado (ex.: `SN + "1"`, `fabricante`).
 - **Rodapé** de cada página: última execução (data/hora, sucesso ou erro) do histórico local.
-- **Configurações**: atalho global, iniciar com o Windows, tema (Escuro/Claro/Sistema), pasta de
-  ferramentas, tempo do aviso, manter histórico (lig/deslig), abrir pasta de dados, versão.
+- **Configurações**: atalho global (ver 3.6), iniciar com o Windows, tema (Escuro/Claro/Sistema),
+  pasta de ferramentas, tempo do aviso, manter histórico (lig/deslig), abrir pasta de dados, versão.
+
+### 5.1 Atalho global configurável (item 2)
+
+- A caixa mostra o atalho atual e o botão **"Definir atalho"**. A captura só acontece depois de
+  armar: enquanto não armada, nenhuma tecla perdida troca o atalho do sistema.
+- Armada, a caixa lê o **input do usuário** (modificadores + tecla final) e mostra a combinação
+  (`Ctrl+Alt+Space`, `Ctrl+Shift+F10`…). Ao soltar a tecla final, o atalho é **registrado na hora**
+  e gravado em `settings.json`.
+- Exige ao menos um modificador (Ctrl/Alt/Shift/Win). `Esc` cancela. Perder o foco cancela.
+- Se o Windows recusar (combinação já usada por outro programa), a mensagem diz isso e o atalho
+  anterior continua valendo.
 
 ---
 
@@ -151,6 +167,20 @@ Layout estilo PowerToys: navegação à esquerda, conteúdo à direita.
 - Saída padrão é a resposta; erro padrão e código de saída alimentam o detalhe do erro.
 - Histórico local (JSONL, sem segredos): hora, ferramenta, entrada mascarada quando sensível,
   duração, sucesso/erro, mensagem curta.
+
+### 6.5 Credenciais (item 3)
+
+- O usuário digita usuário e senha **na aba da ferramenta**. Não existe caminho de arquivo para
+  preencher à mão.
+- Gravação **automática** ao sair do campo, e um botão **"Salvar credenciais"** para gravar na hora
+  com confirmação na tela. Botão **"Apagar"** remove da máquina.
+- Armazenamento: `%LOCALAPPDATA%\AnalistaHub\credenciais.dat`, cifrado com **DPAPI** (escopo do
+  usuário Windows). Copiar o arquivo para outra máquina/usuário não revela nada.
+- Entrega ao script: **variável de ambiente** do processo filho (`ANALISTAHUB_USER`,
+  `ANALISTAHUB_PASS`) — nunca por linha de comando (que aparece em lista de processos), nunca em
+  log, histórico ou manifesto.
+- Compatibilidade: se o usuário não preencher, o script antigo continua lendo o cofre markdown que
+  ele já conhece. Nada quebra para quem usa o Espanso.
 
 ---
 
@@ -270,6 +300,14 @@ Ambiente: Windows 10 corporativo, sem administrador. SDK .NET 8.0.428 instalado 
 | MAC localmente administrado | `--test mac-vendor 02:11:22` | `ok: false` com explicação (não vira valor) |
 | MAC inválido | `--test mac-vendor zz` | `ok: false` com explicação |
 | Atalho global abre a HUD | `keybd_event Ctrl+Alt+Space` | HUD aparece em 0,2 s, com foco no campo de busca |
+| Captura de atalho (item 2) | `--arm-hotkey` + teclado real `^%{F9}` | log `key=F9 mods=[Ctrl+Alt] combo=Ctrl+Alt+F9`; `settings.json` grava `Ctrl+Alt+F9` |
+| Captura recusa tecla pura | tecla sem modificador | mensagem "use Ctrl, Alt, Shift ou Win" e atalho anterior mantido |
+| Credenciais cifradas (item 3) | `--set-cred` (valor via STDIN) + `--probe` | `completo: true`; `credenciais.dat` gravado com DPAPI |
+| Senha errada no HUB | `--set-cred passwd` com valor inválido + `--test` | falha de login com mensagem "Usuário ou senha recusados pelo inventário" |
+| Senha correta no HUB | `--set-cred` com valor do cofre + `--test` | `ok: true`, valor `E3210E3C4EE71` |
+| Cofre antigo continua válido | script chamado direto, sem env | responde `E3210E3C4EE71` (Espanso não quebra) |
+| Gatilho configurável (item 4) | `--set-trigger mkt-serial :sn` + `--list-tools` | `gatilho: ":sn"`, persistido em `settings.json`, volta a `:mkt` |
+| Clique direito na bandeja (item 1) | `PostMessage(WM_TRAYICON, WM_RBUTTONUP)` | log `tray: mensagem 0x205` → `ShowMainWindow` com `fg=hwnd ok=True` |
 | Busca por gatilho + campos | digitar `:macv` + `Enter` | filtra para 1 ferramenta e abre o campo "MAC do equipamento" |
 | Aviso de resultado | `--preview-toast` | janela perto do cursor, valor copiável, fecha em 12 s |
 | Página da ferramenta | `--page mkt-serial` | os quatro blocos renderizam |

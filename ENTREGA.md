@@ -49,9 +49,11 @@ Saída de dados do app (nunca dentro da pasta do programa):
 | `%LOCALAPPDATA%\AnalistaHub\historico.jsonl` | últimas execuções (sem segredos) |
 | `%LOCALAPPDATA%\AnalistaHub\hub.log` | diagnóstico |
 
-Credenciais **não** são copiadas nem duplicadas: o app lê o cofre que já existe em
-`%USERPROFILE%\Documents\Processos\Analyser\credenciais\cofre.md` (seção 5) e só mostra
-"credenciais encontradas / faltando". Nenhum segredo é gravado, logado ou exibido.
+Credenciais **não** ficam no repositório nem em arquivo de texto do HUB: são digitadas na aba da
+ferramenta e guardadas cifradas com DPAPI em `%LOCALAPPDATA%\AnalistaHub\credenciais.dat`, sendo
+entregues ao script por variável de ambiente (`ANALISTAHUB_USER` / `ANALISTAHUB_PASS`). O cofre
+markdown que os scripts antigos leem continua funcionando como fallback — o HUB não exige que ele
+exista, e não mostra caminho de arquivo para o operador.
 
 ---
 
@@ -84,6 +86,7 @@ $exe = "$env:LOCALAPPDATA\Programs\AnalistaHub\AnalistaHub.exe"
 & $exe --probe mkt-serial             # servico_responde:true e credenciais completo:true
 & $exe --test mac-vendor "F4:8E:38"   # {"ok":true,"valor":"Dell Inc."}
 & $exe --test mkt-serial "10.0.0.1"   # {"ok":true,"valor":"<SN>1"}
+& $exe --set-cred mkt-serial passwd   # valor vem do STDIN (não aparece no histórico do shell)
 ```
 
 Depois, na interface: `Analista Hub.cmd` → janela principal; `Ctrl+Alt+Espaço` → HUD;
