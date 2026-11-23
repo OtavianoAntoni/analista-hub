@@ -79,8 +79,11 @@ public static class HistoryStore
             if (!File.Exists(AppPaths.HistoryFile)) return result;
             string[] lines;
             lock (Lock) lines = File.ReadAllLines(AppPaths.HistoryFile);
-            foreach (var line in lines.Reverse())
+            // índice em vez de lines.Reverse(): em .NET 8 o array converte para Span<T> e o
+            // Reverse() escolhido pode ser o de MemoryExtensions, que devolve void (CS1579 no CI).
+            for (var i = lines.Length - 1; i >= 0; i--)
             {
+                var line = lines[i];
                 if (result.Count >= count) break;
                 try
                 {
