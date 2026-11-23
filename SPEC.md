@@ -177,6 +177,45 @@ Comportamento assumido, então:
 Regressão que isso corrige: antes, depois do X, `ShowMainWindow` estourava
 `NullReferenceException` e o app ficava inacessível, vivo só na bandeja.
 
+### 5.4 Janela em branco (corrigido) e por que não existe X
+
+Sintoma relatado: ao abrir a janela pelo menu do ícone, ela vinha **toda branca**, e só carregava
+quando era arrastada para o outro monitor.
+
+Medido com o build anterior (`build/test-janela-branca.py`, cores distintas na área de conteúdo):
+
+```
+ciclo 1: janela inicial cores=1184 | reaberta cores=1   -> EM BRANCO
+ciclo 2: janela inicial cores=1    | reaberta cores=1   -> EM BRANCO
+ciclo 3: janela inicial cores=1    | reaberta cores=1   -> EM BRANCO
+```
+
+Causa real (não era DPI): no WinUI 3, quando a **última janela do app é fechada**, o host XAML é
+desmontado. Como o processo continua vivo pela bandeja, qualquer janela criada depois disso **não
+renderiza** — fica branca. Reproduzido nos dois monitores, com e sem escala diferente.
+
+Correções aplicadas:
+
+1. A janela principal **não pode ser fechada pelo usuário**: o estilo `WS_SYSMENU` é removido no
+   primeiro `Activated`. Isso tira o **X** do título e desliga o **Alt+F4**. Fechar é pelo menu do
+   ícone → *Fechar aplicativo*, ou pelo par de botões **Minimizar / Fechar** no rodapé da barra
+   lateral.
+2. Janela "guardiã" invisível (8×8 fora da tela, fora do Alt+Tab) mantém o host XAML vivo, para o
+   caso de a janela principal ainda ser destruída por algo fora do controle do app.
+3. `ShowMainWindow` recria a janela se o HWND morreu (rede de segurança) e força repaint
+   (`NudgeRender`: empurrão de 1 px + `UpdateLayout`) depois de mostrar.
+
+Prova depois da correção (mesmo teste):
+
+```
+1. aberta:            cores = 2847
+2. depois do Alt+F4:  janela existe = True | cores = 2847
+3. abrir de novo:     mesma janela = True | cores = 2847
+```
+
+Isto é: o Alt+F4 não fecha mais, abrir pelo ícone reaproveita a janela existente e o conteúdo está
+renderizado. Ver `docs/REGRAS-DE-FERRAMENTA.md` (R7).
+
 ---
 
 ## 6. Serviços do HUB

@@ -25,6 +25,7 @@ public sealed partial class MainWindow : Window
     private static readonly Dictionary<string, (bool ok, DateTime when)> ProbeCache = new();
     private Action<bool>? _armHotkeyCapture;
     private Action? _validateCurrentTool;
+    private bool _nudging;
 
     public MainWindow()
     {
@@ -38,6 +39,10 @@ public sealed partial class MainWindow : Window
         // nem cancelável). O app continua vivo pela janela oculta da bandeja, e qualquer ação de
         // "abrir" recria a janela na hora — ver App.EnsureMainWindow.
         Closed += (_, _) => AppPaths.Log("janela principal fechada — app segue na bandeja, abrir recria");
+
+        // O empurrão de re-render NÃO roda aqui: mexer no tamanho de uma janela que ainda não foi
+        // mostrada deixa a ilha XAML sem conteúdo (janela branca). Só depois de Show + Activate.
+        Activated += OnFirstActivated;
 
         RootGrid.RequestedTheme = App.Settings.Theme switch
         {
@@ -54,6 +59,79 @@ public sealed partial class MainWindow : Window
 
         RebuildNav();
         UpdateHotkeyHint();
+    }
+
+    /// <summary>
+    /// Primeira ativação: aqui o HWND já existe. Desliga o fechamento pelo usuário e força o repaint
+    /// inicial (sem isso a primeira janela também pode sair parcialmente em branco).
+    /// </summary>
+    private void OnFirstActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args)
+    {
+        Activated -= OnFirstActivated;
+        DisableUserClose();
+        ScheduleRenderKick();
+    }
+
+    /// <summary>
+    /// Tira o menu de sistema da janela (WS_SYSMENU). Efeito: some o botão X do título e o Alt+F4
+    /// deixa de fechar — e fechar a janela é justamente o que faz o WinUI derrubar a composição e
+    /// as janelas seguintes abrirem em branco. Sair é pelo menu do ícone → "Fechar aplicativo".
+    /// </summary>
+    private void DisableUserClose()
+    {
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            if (hwnd == IntPtr.Zero) return;
+
+            var style = Native.GetWindowLongPtr(hwnd, Native.GWL_STYLE).ToInt64();
+            if ((style & Native.WS_SYSMENU) == 0)
+            {
+                AppPaths.Log("janela principal: já sem menu de sistema");
+                return;
+            }
+
+            Native.SetWindowLongPtr(hwnd, Native.GWL_STYLE, (IntPtr)(style & ~Native.WS_SYSMENU));
+            Native.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_FRAMECHANGED);
+            AppPaths.Log("janela principal: menu de sistema removido (sem X, sem Alt+F4) — sair pelo menu do ícone");
+        }
+        catch (Exception ex) { AppPaths.Log("disable close: " + ex.Message); }
+    }
+    /// <summary>
+    /// Força o conteúdo a repintar: empurrão de 1 px (gera WM_SIZE) + UpdateLayout. Cura a janela
+    /// que abre parcialmente em branco e só carrega quando o usuário mexe nela.
+    /// </summary>
+    public void NudgeRender()
+    {
+        if (_nudging) return;
+        _nudging = true;
+        try
+        {
+            var size = AppWindow.Size;
+            var pos = AppWindow.Position;
+            if (size.Width <= 2 || size.Height <= 2) return;
+
+            Content?.UpdateLayout();
+
+            AppWindow.MoveAndResize(new RectInt32(pos.X, pos.Y, size.Width - 1, size.Height));
+            AppWindow.MoveAndResize(new RectInt32(pos.X, pos.Y, size.Width, size.Height));
+
+            Content?.UpdateLayout();
+            AppPaths.Log($"re-render: janela {size.Width}x{size.Height} em ({pos.X},{pos.Y}) escala {UiKit.Scale(this) * 100:0}%");
+        }
+        catch (Exception ex) { AppPaths.Log("re-render: " + ex.Message); }
+        finally { _nudging = false; }
+    }
+
+    /// <summary>Agenda o empurrão para depois que a janela aparecer e o DPI já tiver assentado.</summary>
+    public void ScheduleRenderKick()
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(120);
+        timer.IsRepeating = false;
+        timer.Tick += (_, _) => NudgeRender();
+        timer.Start();
     }
 
     private void CenterOnScreen()
@@ -176,6 +254,14 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() => _validateCurrentTool?.Invoke());
 
     private void OnOpenHudClick(object sender, RoutedEventArgs e) => HudController.Show();
+
+    private void OnExitClick(object sender, RoutedEventArgs e) => App.ExitApp();
+
+    private void OnMinimizeClick(object sender, RoutedEventArgs e)
+    {
+        try { ((Microsoft.UI.Windowing.OverlappedPresenter)AppWindow.Presenter).Minimize(); }
+        catch (Exception ex) { AppPaths.Log("minimizar: " + ex.Message); }
+    }
 
     // ================================================================== widgets
     private Border Card(UIElement child, Thickness? padding = null) => new()

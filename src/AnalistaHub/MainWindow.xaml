@@ -54,6 +54,16 @@
                            Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                 <TextBlock x:Name="HotkeyWarning" FontSize="11" TextWrapping="Wrap" Visibility="Collapsed"
                            Foreground="#FFFF9F9F" />
+                <!-- a janela não tem X (o fechar pelo título destrói a janela e o WinUI abre as
+                     seguintes em branco); sair é por aqui ou pelo menu do ícone -->
+                <Grid ColumnSpacing="8" Margin="0,6,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Button Content="Minimizar" Click="OnMinimizeClick" HorizontalAlignment="Stretch" FontSize="12" />
+                    <Button Grid.Column="1" Content="Fechar" Click="OnExitClick" HorizontalAlignment="Stretch" FontSize="12" />
+                </Grid>
             </StackPanel>
         </Grid>
 

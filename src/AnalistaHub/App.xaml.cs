@@ -18,6 +18,13 @@ public partial class App : Application
     /// <summary>Verdadeiro só quando o usuário manda sair pelo menu — aí o X não esconde, fecha.</summary>
     public static bool ForcedExit { get; private set; }
 
+    /// <summary>
+    /// Janela invisível que mantém o host XAML do app vivo. Sem ela, fechar a última janela faz o
+    /// WinUI desmontar a composição: qualquer janela criada depois disso abre EM BRANCO (o processo
+    /// continua vivo pela bandeja, os timers rodam, mas nada renderiza). Ver SPEC §5.4.
+    /// </summary>
+    private static Window? _keeper;
+
     public App()
     {
         InitializeComponent();
@@ -60,6 +67,8 @@ public partial class App : Application
         catch (Exception ex) { AppPaths.Log("sinal de instância: " + ex.Message); }
 
         Catalog = ToolCatalog.Load();
+
+        CreateKeeperWindow();
 
         MainWin = new MainWindow();
         MainWin.Activate();
@@ -137,6 +146,35 @@ public partial class App : Application
     }
 
     /// <summary>
+    /// Cria a janela guardiã: 1x1, fora do Alt+Tab, invisível e sem conteúdo. Ela nunca aparece na
+    /// tela; existe só para o WinUI nunca achar que "acabaram as janelas" e derrubar a composição.
+    /// </summary>
+    private static void CreateKeeperWindow()
+    {
+        try
+        {
+            _keeper = new Window { Title = "AnalistaHubKeeper" };
+
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_keeper);
+            if (hwnd == IntPtr.Zero)
+            {
+                // HWND só nasce no primeiro Activate; ela fica fora da tela (8x8 em -32000)
+                _keeper.Activate();
+                hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_keeper);
+            }
+
+            var id = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
+            var appWindow = Microsoft.UI.Windowing.AppWindow.GetFromWindowId(id);
+            appWindow.IsShownInSwitchers = false;
+            appWindow.MoveAndResize(new Windows.Graphics.RectInt32(-32000, -32000, 8, 8));
+            Native.ShowWindow(hwnd, Native.SW_HIDE);
+
+            AppPaths.Log($"janela guardiã criada: hwnd={hwnd}");
+        }
+        catch (Exception ex) { AppPaths.Log("janela guardiã falhou: " + ex); }
+    }
+
+    /// <summary>
     /// Menu do clique direito na bandeja: nome das ferramentas, Configurações e Fechar aplicativo.
     /// É montado na hora, então ferramenta nova aparece sem reiniciar.
     /// </summary>
@@ -200,7 +238,7 @@ public partial class App : Application
     {
         try
         {
-            EnsureMainWindow();
+            if (!EnsureMainWindow()) return;   // janela morta: o app está reiniciando
             if (MainWin is null) return;
 
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(MainWin);
@@ -209,6 +247,11 @@ public partial class App : Application
             Native.ShowWindow(hwnd, Native.SW_RESTORE);
             MainWin.Activate();
             UiKit.ForceForeground(MainWin);
+
+            // janela em monitor com escala diferente abre em branco até algo redimensionar:
+            // agenda um empurrão de 1 px para forçar o repaint
+            MainWin.ScheduleRenderKick();
+
             AppPaths.Log($"ShowMainWindow: fg={Native.GetForegroundWindow()} ok={Native.GetForegroundWindow() == hwnd}");
         }
         catch (Exception ex) { AppPaths.Log("ShowMainWindow: " + ex); }
@@ -219,7 +262,7 @@ public partial class App : Application
     /// do WinUI). Se o HWND não existe mais, cria outra — senão "abrir" não faz nada e o app fica
     /// vivo só na bandeja, sem janela nenhuma. O atalho global é re-registrado na janela nova.
     /// </summary>
-    private static void EnsureMainWindow()
+    private static bool EnsureMainWindow()
     {
         var alive = false;
         if (MainWin is not null)
@@ -232,26 +275,45 @@ public partial class App : Application
             catch { alive = false; }
         }
 
-        if (alive) return;
+        if (alive) return true;
 
-        AppPaths.Log("janela principal não existe mais — recriando");
-        MainWin = new MainWindow();
+        // Recriar a janela DENTRO deste processo sai em branco: quando a última janela do app é
+        // fechada, o WinUI desmonta o host XAML e nada mais renderiza. Comprovado com contagem de
+        // cores (1 cor = branco) nos dois monitores. Solução determinística: começar um processo
+        // novo, que abre a primeira janela já renderizando — e sair deste.
+        AppPaths.Log("janela principal não existe mais — reiniciando o processo para abrir janela nova");
+        RelaunchSelf();
+        return false;
+    }
 
-        // volta para a tela onde o usuário estava quando fechou a janela
-        if (!string.IsNullOrWhiteSpace(Settings.LastPage))
+    /// <summary>
+    /// Inicia uma nova instância depois de 2 s (tempo do mutex desta liberar) e encerra esta.
+    /// O processo novo abre a janela principal normalmente, no estado salvo em settings.json.
+    /// </summary>
+    private static void RelaunchSelf()
+    {
+        try
         {
-            try { MainWin.NavigateTo(Settings.LastPage); } catch { }
-        }
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe))
+            {
+                AppPaths.Log("relançar: caminho do executável desconhecido");
+                return;
+            }
 
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(MainWin);
-        try { Hotkey?.Dispose(); } catch { }
-        Hotkey = new HotkeyService(hwnd);
-        Hotkey.Pressed += () => HudController.Toggle();
-        if (!Hotkey.Register(Settings.Hotkey, out var error))
-        {
-            AppPaths.Log("atalho após recriar janela: " + error);
-            MainWin.SetHotkeyWarning(error);
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c timeout /t 2 /nobreak >nul & start \"\" \"{exe}\"",
+                CreateNoWindow = true,
+                UseShellExecute = false
+            };
+            System.Diagnostics.Process.Start(psi);
+
+            ForcedExit = true;
+            Application.Current.Exit();
         }
+        catch (Exception ex) { AppPaths.Log("relançar falhou: " + ex.Message); }
     }
 
     /// <summary>Reescreve o atalho global (usado pela tela de configurações).</summary>

@@ -79,7 +79,6 @@ A mesma bolinha da aba Início reflete comunicação **e** autenticação:
 Proibido criar uma segunda bolinha para "status de login": o estado de autenticação entra na mesma.
 
 ## R6 — Gate automático (é o que torna a regra permanente)
-
 `build/publish.ps1` roda `AnalistaHub.exe --check-tools` no pacote gerado e **aborta** se houver:
 
 - manifesto inválido ou script inexistente;
@@ -94,6 +93,21 @@ dist\AnalistaHub\AnalistaHub.exe --check-tools
 ```
 
 ---
+
+## R7 — Janela principal e bandeja (não regredir)
+
+O app vive na bandeja e a janela principal **não pode ser fechada pelo usuário**:
+
+| Regra | Motivo |
+|---|---|
+| sem `WS_SYSMENU` na janela principal | sem X e sem Alt+F4: fechar a última janela faz o WinUI desmontar o host XAML e **toda janela criada depois abre em branco** |
+| botões **Minimizar** e **Fechar** no rodapé da barra lateral | devolvem a affordance que o X fazia |
+| sair de verdade = menu do ícone → *Fechar aplicativo* | é o único caminho que encerra o processo (`App.ExitApp` + `ForcedExit`) |
+| janela "guardiã" invisível viva | mantém o host XAML de pé se a janela principal morrer por fora |
+| `ShowMainWindow` recria + `NudgeRender` | rede de segurança: reaproveita, recria se preciso e força repaint |
+
+Teste de regressão: `build/test-janela-branca.py <exe> <ciclos>` — janela com menos de 80 cores
+distintas na área de conteúdo é considerada **em branco** (falha).
 
 ## Como isso chega às próximas sessões
 

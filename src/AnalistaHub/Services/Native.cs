@@ -39,6 +39,7 @@ internal static class Native
     public const uint SWP_NOSIZE = 0x0001;
     public const uint SWP_NOMOVE = 0x0002;
     public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_NOZORDER = 0x0004;
     [DllImport("user32.dll")] public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
     [DllImport("user32.dll")] public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int index, IntPtr value);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
@@ -47,6 +48,9 @@ internal static class Native
 
     public const uint MONITOR_DEFAULTTONEAREST = 2;
     public const int GWL_EXSTYLE = -20;
+    public const int GWL_STYLE = -16;
+    public const long WS_SYSMENU = 0x00080000L;
+    public const uint SWP_FRAMECHANGED = 0x0020;
     public const long WS_EX_TOOLWINDOW = 0x00000080;
     public const int SW_RESTORE = 9;
 
