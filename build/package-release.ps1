@@ -17,6 +17,8 @@ param(
     [string]$BaseUrl = '',
     [string]$Notes = '',
     [string]$Repo = 'OtavianoAntoni/analista-hub',
+    # Pasta/canal de rede: copia zip, .sha256 e (por último) o latest.json para lá
+    [string]$ChannelDir = '',
     [switch]$SkipScripts
 )
 
@@ -83,4 +85,16 @@ $manifest = [ordered]@{
 $json = $manifest | ConvertTo-Json -Depth 6
 [System.IO.File]::WriteAllText((Join-Path $outDir 'latest.json'), $json, $utf8)
 Write-Host "== manifesto: $(Join-Path $outDir 'latest.json')"
+
+# Canal de rede (share): zip e hash primeiro, manifesto por ÚLTIMO — ninguém deve ler um manifesto
+# que aponta para um zip que ainda não chegou.
+if ($ChannelDir) {
+    if (-not (Test-Path $ChannelDir)) { New-Item -ItemType Directory -Force -Path $ChannelDir | Out-Null }
+    Copy-Item $zipPath (Join-Path $ChannelDir $AssetName) -Force
+    Copy-Item "$zipPath.sha256" (Join-Path $ChannelDir "$AssetName.sha256") -Force
+    Copy-Item (Join-Path $outDir 'notas.md') (Join-Path $ChannelDir 'notas.md') -Force
+    Copy-Item (Join-Path $outDir 'latest.json') (Join-Path $ChannelDir 'latest.json') -Force
+    Write-Host "== canal atualizado: $ChannelDir"
+}
+
 Write-Host "== pronto: $outDir"

@@ -69,27 +69,46 @@ public static class UpdateService
         var now = DateTimeOffset.UtcNow;
         try
         {
-            using var http = CreateClient();
-            using var resp = await http.GetAsync(FeedUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+            var feed = FeedUrl;
+            string json;
 
-            if (resp.StatusCode == HttpStatusCode.NotFound)
-                return new UpdateCheck
-                {
-                    Ok = true, CurrentVersion = current, CheckedAtUtc = now,
-                    Message = "O canal de atualização respondeu 404 — nenhuma versão publicada ainda. " +
-                              "Se o repositório for privado, o app não consegue ler as releases."
-                };
+            // Canal em pasta (share de rede, %LOCALAPPDATA%, unidade mapeada): nada precisa ser
+            // público. É o caminho natural em rede corporativa — o CI/analista copia a pasta lá.
+            if (TryResolveLocal(feed, out var feedPath))
+            {
+                if (!File.Exists(feedPath))
+                    return new UpdateCheck
+                    {
+                        Ok = true, CurrentVersion = current, CheckedAtUtc = now,
+                        Message = $"O canal de atualização não existe em {feedPath}."
+                    };
+                json = await File.ReadAllTextAsync(feedPath, ct);
+            }
+            else
+            {
+                using var http = CreateClient();
+                using var resp = await http.GetAsync(feed, HttpCompletionOption.ResponseHeadersRead, ct);
 
-            if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
-                return new UpdateCheck
-                {
-                    Ok = false, CurrentVersion = current, CheckedAtUtc = now,
-                    Error = "O canal de atualização recusou o acesso (HTTP " + (int)resp.StatusCode +
-                            "). Repositório privado exige token — este app não guarda token."
-                };
+                if (resp.StatusCode == HttpStatusCode.NotFound)
+                    return new UpdateCheck
+                    {
+                        Ok = true, CurrentVersion = current, CheckedAtUtc = now,
+                        Message = "O canal de atualização respondeu 404 — nenhuma versão publicada ainda. " +
+                                  "Se o repositório for privado, o app não consegue ler as releases."
+                    };
 
-            resp.EnsureSuccessStatusCode();
-            var json = await resp.Content.ReadAsStringAsync(ct);
+                if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
+                    return new UpdateCheck
+                    {
+                        Ok = false, CurrentVersion = current, CheckedAtUtc = now,
+                        Error = "O canal de atualização recusou o acesso (HTTP " + (int)resp.StatusCode +
+                                "). Repositório privado exige token — este app não guarda token."
+                    };
+
+                resp.EnsureSuccessStatusCode();
+                json = await resp.Content.ReadAsStringAsync(ct);
+            }
+
             var manifest = JsonSerializer.Deserialize<UpdateManifest>(json, JsonOptions);
             if (manifest is null || string.IsNullOrWhiteSpace(manifest.Version))
                 return new UpdateCheck
@@ -173,21 +192,33 @@ public static class UpdateService
         if (!hashOk)
         {
             if (File.Exists(zipPath)) File.Delete(zipPath);
-            using var http = CreateClient();
-            using var resp = await http.GetAsync(asset.Url, HttpCompletionOption.ResponseHeadersRead, ct);
-            resp.EnsureSuccessStatusCode();
-            var total = resp.Content.Headers.ContentLength ?? asset.Size;
-            await using (var source = await resp.Content.ReadAsStreamAsync(ct))
-            await using (var target = File.Create(zipPath))
+
+            var location = ResolveAssetLocation(asset.Url);
+            if (TryResolveLocal(location, out var assetPath))
             {
-                var buffer = new byte[81920];
-                long read = 0;
-                int n;
-                while ((n = await source.ReadAsync(buffer, ct)) > 0)
+                if (!File.Exists(assetPath))
+                    throw new FileNotFoundException("Pacote não encontrado no canal: " + assetPath);
+                File.Copy(assetPath, zipPath, overwrite: true);
+                progress?.Report(0.85);
+            }
+            else
+            {
+                using var http = CreateClient();
+                using var resp = await http.GetAsync(location, HttpCompletionOption.ResponseHeadersRead, ct);
+                resp.EnsureSuccessStatusCode();
+                var total = resp.Content.Headers.ContentLength ?? asset.Size;
+                await using (var source = await resp.Content.ReadAsStreamAsync(ct))
+                await using (var target = File.Create(zipPath))
                 {
-                    await target.WriteAsync(buffer.AsMemory(0, n), ct);
-                    read += n;
-                    if (total > 0) progress?.Report(0.85 * Math.Min(1.0, (double)read / total));
+                    var buffer = new byte[81920];
+                    long read = 0;
+                    int n;
+                    while ((n = await source.ReadAsync(buffer, ct)) > 0)
+                    {
+                        await target.WriteAsync(buffer.AsMemory(0, n), ct);
+                        read += n;
+                        if (total > 0) progress?.Report(0.85 * Math.Min(1.0, (double)read / total));
+                    }
                 }
             }
 
@@ -395,6 +426,55 @@ public static class UpdateService
         http.DefaultRequestHeaders.UserAgent.ParseAdd("AnalistaHub-Updater/1.0");
         http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return http;
+    }
+
+    /// <summary>
+    /// O canal pode ser uma pasta: UNC (<c>\\servidor\share\...</c>), unidade (<c>D:\...</c>) ou
+    /// <c>file://</c>. Em rede corporativa isso dispensa hospedar qualquer coisa na internet.
+    /// </summary>
+    private static bool TryResolveLocal(string location, out string path)
+    {
+        path = "";
+        if (string.IsNullOrWhiteSpace(location)) return false;
+        var v = location.Trim();
+
+        if (v.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+        {
+            try { path = new Uri(v).LocalPath.Replace('/', '\\'); return true; }
+            catch { return false; }
+        }
+
+        if (v.StartsWith(@"\\", StringComparison.Ordinal) ||
+            (v.Length >= 3 && char.IsLetter(v[0]) && v[1] == ':' && (v[2] == '\\' || v[2] == '/')))
+        {
+            path = v.Replace('/', '\\');
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsAbsoluteLocation(string location)
+    {
+        var v = (location ?? "").Trim();
+        return v.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || v.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            || v.StartsWith(@"\\", StringComparison.Ordinal)
+            || v.StartsWith("file://", StringComparison.OrdinalIgnoreCase)
+            || (v.Length >= 3 && char.IsLetter(v[0]) && v[1] == ':' && (v[2] == '\\' || v[2] == '/'));
+    }
+
+    /// <summary>URL/pasta relativa no manifesto é resolvida contra o canal (pasta do manifesto).</summary>
+    private static string ResolveAssetLocation(string assetUrl)
+    {
+        var url = (assetUrl ?? "").Trim();
+        if (IsAbsoluteLocation(url)) return url;
+
+        var feed = FeedUrl;
+        if (TryResolveLocal(feed, out var feedPath))
+            return Path.Combine(Path.GetDirectoryName(feedPath) ?? "", url.Replace('/', '\\'));
+
+        return new Uri(new Uri(feed), url).ToString();
     }
 
     private static bool IsWritable(string dir)

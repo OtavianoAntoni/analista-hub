@@ -77,8 +77,9 @@ Para gerar o pacote à mão (sem CI): `powershell -File build\package-release.ps
 e suba `dist\release\{*.zip, *.sha256, latest.json}` numa release do GitHub.
 
 O canal precisa ser **legível sem autenticação**: em repositório privado o manifesto responde 404.
-Nesse caso use `UpdateFeedUrl` (em `settings.json`) apontando para um endereço interno, ou publique
-os artefatos num repositório público só de releases.
+Duas saídas que não expõem nada: publicar a pasta numa **share de rede** e apontar `UpdateFeedUrl`
+(em `%LOCALAPPDATA%\AnalistaHub\settings.json`) para `\\servidor\share\AnalistaHub\latest.json`, ou
+usar um repositório público só de releases.
 
 
 ## Ferramenta de base local (`kind: "dataset"`)

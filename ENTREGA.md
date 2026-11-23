@@ -154,5 +154,6 @@ Publicar versão nova: sobe a `<Version>` no `AnalistaHub.csproj`, commita e emp
 
 **Requisito do canal:** o manifesto e o zip precisam ser legíveis **sem autenticação**. Enquanto o
 repositório for privado, o `GET` responde 404 e o app mostra "nenhuma versão publicada ainda".
-Alternativas: repositório público (o README avisa para revisar os endereços internos antes),
-repositório público só de releases, ou `UpdateFeedUrl` apontando para um endereço interno.
+Alternativas sem expor nada: `UpdateFeedUrl` apontando para uma **share de rede**
+(`\\servidor\share\AnalistaHub\latest.json` — o app lê a pasta direto, e o `url` do asset pode ser
+relativo), `file://`, ou repositório público só de releases.

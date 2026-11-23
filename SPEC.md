@@ -346,6 +346,11 @@ Ponto importante: não é a API do GitHub (`api.github.com`). O endereço
 consome o limite de 60 requisições/hora por IP e não depende de token. Pode ser trocado pela
 variável `ANALISTAHUB_UPDATE_FEED` (testes) ou pelo campo `UpdateFeedUrl` em `settings.json`.
 
+**O canal também pode ser uma pasta** — `\\servidor\share\AnalistaHub\latest.json`, `D:\...` ou
+`file://...`. Nesse caso o app lê o manifesto do disco e copia o zip de lá; o `url` do asset pode ser
+relativo (`"./AnalistaHub-0.2.1-win-x64.zip"`, resolvido na pasta do manifesto). É o caminho que
+mantém tudo privado: o código e os endereços internos dos manifestos não vão para a internet.
+
 ```json
 {
   "schema": 1,
