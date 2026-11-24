@@ -80,6 +80,10 @@ public sealed class SseCatalog
     public string DataPath { get; set; } = "";
     public string? Error { get; set; }
 
+    /// <summary>O arquivo de rede interna (sse-rede.local.json) foi encontrado e mesclado?</summary>
+    public bool RedeLocalCarregada { get; set; }
+    public string RedeLocalPath { get; set; } = "";
+
     public bool Loaded => Error is null && Cities.Count > 0;
 
     public static SseCatalog Load()
@@ -120,6 +124,23 @@ public sealed class SseCatalog
             foreach (var city in catalog.Cities)
                 if (string.IsNullOrWhiteSpace(city.Key)) city.Key = Text.Fold(city.Name).ToUpperInvariant();
 
+            // A base versionada NÃO tem NM/OLT/VPN (dado de rede interna). O que houver vem deste
+            // arquivo local, ignorado pelo git: %LOCALAPPDATA%\AnalistaHub\sse-rede.local.json
+            var rede = CarregarRedeLocal();
+            if (rede is not null)
+            {
+                catalog.RedeLocalCarregada = true;
+                catalog.RedeLocalPath = Path.Combine(AppPaths.DataDir, RedeLocalNome);
+                foreach (var city in catalog.Cities)
+                {
+                    if (!rede.TryGetValue(ChaveRede(city.Key, city.Uf), out var rows) || rows.Count == 0) continue;
+                    city.Rows = rows;
+                    city.Origin = "sse";
+                }
+                catalog.TotalWithAccess = catalog.Cities.Count(c => c.HasAccess);
+                catalog.TotalLines = catalog.Cities.Sum(c => c.Rows.Count);
+            }
+
             AppPaths.Log($"SseCatalog: {catalog.Cities.Count} cidades " +
                          $"({catalog.TotalWithAccess} com NM, {catalog.TotalLines} linhas), " +
                          $"{catalog.Sources.Count} fonte(s), gerado em {catalog.Generated}, de {path}");
@@ -131,6 +152,47 @@ public sealed class SseCatalog
         }
 
         return catalog;
+    }
+
+    /// <summary>Nome do arquivo local com as redes internas (NM · OLT · VPN). Nunca versionado.</summary>
+    private const string RedeLocalNome = "sse-rede.local.json";
+
+    /// <summary>
+    /// Chave de junção da rede interna: nome sem acento + UF. Só o nome colide — há municípios
+    /// homônimos em estados diferentes (ex.: "BOM JESUS" no PI e no RS).
+    /// </summary>
+    private static string ChaveRede(string key, string uf) =>
+        (key.Trim() + "|" + uf.Trim()).ToUpperInvariant();
+
+    /// <summary>
+    /// Lê as redes internas do arquivo local. Ausente = a consulta funciona só com sigla/UF — é o que
+    /// acontece em qualquer clone do repositório, porque NM/OLT/VPN não fazem parte da base pública.
+    /// </summary>
+    private static Dictionary<string, List<SseRow>>? CarregarRedeLocal()
+    {
+        var path = Path.Combine(AppPaths.DataDir, RedeLocalNome);
+        if (!File.Exists(path))
+        {
+            AppPaths.Log("SseCatalog: rede local ausente (consulta sem NM/OLT/VPN) — " + path);
+            return null;
+        }
+
+        try
+        {
+            var file = JsonSerializer.Deserialize<SseRedeFile>(File.ReadAllText(path), Options);
+            var map = new Dictionary<string, List<SseRow>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var city in file?.Cities ?? new List<SseRedeCity>())
+                if (!string.IsNullOrWhiteSpace(city.Key))
+                    map[ChaveRede(city.Key, city.Uf)] = city.Rows;
+
+            AppPaths.Log($"SseCatalog: rede local com {map.Count} cidade(s) — {path}");
+            return map;
+        }
+        catch (Exception ex)
+        {
+            AppPaths.Log("SseCatalog: rede local inválida — " + ex.Message);
+            return null;
+        }
     }
 
     private static string ResolvePath()
@@ -203,5 +265,21 @@ public sealed class SseCatalog
         [JsonPropertyName("total_linhas")] public int TotalLines { get; set; }
         [JsonPropertyName("sources")] public List<SseSource> Sources { get; set; } = new();
         [JsonPropertyName("cidades")] public List<SseCity> Cities { get; set; } = new();
+    }
+
+    /// <summary>Arquivo local com as redes internas (fora do controle de versão).</summary>
+    private sealed class SseRedeFile
+    {
+        [JsonPropertyName("schema")] public int Schema { get; set; } = 1;
+        [JsonPropertyName("generated")] public string Generated { get; set; } = "";
+        [JsonPropertyName("cidades")] public List<SseRedeCity> Cities { get; set; } = new();
+    }
+
+    private sealed class SseRedeCity
+    {
+        [JsonPropertyName("k")] public string Key { get; set; } = "";
+        [JsonPropertyName("uf")] public string Uf { get; set; } = "";
+        [JsonPropertyName("n")] public string Name { get; set; } = "";
+        [JsonPropertyName("rows")] public List<SseRow> Rows { get; set; } = new();
     }
 }

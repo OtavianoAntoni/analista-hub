@@ -109,6 +109,68 @@ O app vive na bandeja e a janela principal **não pode ser fechada pelo usuário
 Teste de regressão: `build/test-janela-branca.py <exe> <ciclos>` — janela com menos de 80 cores
 distintas na área de conteúdo é considerada **em branco** (falha).
 
+## R9 — Onde mora o script de uma ferramenta
+
+- O script vive **ao lado do manifesto**: `src/AnalistaHub/tools/` (ou a pasta de ferramentas do
+  usuário, quando o manifesto é do usuário). O campo `script` traz **só o nome do arquivo** — sem
+  caminho, sem `%APPDATA%`, sem variável de ambiente.
+- Proibido apontar para pasta de outro programa (Espanso, OneDrive, Área de Trabalho…). O HUB não
+  depende do Espanso nem de arquivos dele: os scripts foram migrados em 24/11/2026.
+- `--check-tools` **bloqueia**: caminho absoluto, caminho fora da pasta do manifesto e qualquer
+  referência a `espanso`.
+- Artefatos que o script cria ao lado de si (`*token*.json`, `*_cache.json`, `*.log`, `*.bak`) estão
+  no `.gitignore` e **nunca** podem ser versionados — o `mkt_serial_token.json` é um JWT de sessão.
+
+## R10 — Ícone de cada ferramenta
+
+Cada ferramenta tem ícone próprio, e trocá-lo não exige código:
+
+| Forma | Campo `icon` no manifesto | Precisa de arquivo? |
+|---|---|---|
+| Glifo do sistema | `"\uE968"` (Segoe MDL2 Assets) | não |
+| Imagem da ferramenta | `"nome.ico"` ou `"nome.png"` | sim, **ao lado do manifesto** |
+
+- O arquivo mora em `src/AnalistaHub/tools/` (ou na pasta de ferramentas do usuário), nunca por
+  caminho absoluto — mesma regra do script (R9).
+- `.ico` com 16, 24, 32, 48 e 256 px (o app desenha entre 18 e 22 px; o Windows usa o resto).
+- Arquivo ausente ou ilegível ⇒ o ícone cai no glifo genérico e `--check-tools` **falha** apontando
+  o caminho completo que faltou.
+- O build copia `tools/*.ico` e `tools/*.png`; ícone novo entra no pacote sem mudar o `.csproj`.
+
+## R11 — Trocar o atalho global nunca deixa o usuário sem atalho
+
+- `HotkeyService.Register` é **transacional**: se o Windows recusar a combinação nova (erro 1409 =
+  outro programa já usa), o atalho anterior volta a valer dentro da mesma chamada.
+- O valor em `settings.json` só muda quando o novo atalho foi **registrado com sucesso**. Uma recusa
+  não sobrescreve a preferência — "a alteração não foi salva" é o comportamento correto nesse caso, e
+  a tela diz o motivo.
+- Depois de gravar, o app **confere o arquivo**; se a gravação não pegou, avisa com o caminho e o
+  efeito ("volta ao anterior quando reiniciar").
+- `settings.json` é gravado de forma **atômica** (arquivo temporário + troca): nunca fica truncado,
+  que faria o app voltar aos padrões.
+- Diagnóstico por linha de comando: `AnalistaHub.exe --try-hotkey "Ctrl+Alt+F9"` informa se o Windows
+  libera a combinação agora, qual é a salva e se ela continua ativa após a recusa.
+
+## R12 — Descrição é frase, não painel de status
+
+`description` do manifesto responde **o que a ferramenta faz**, em uma frase. Ela aparece na linha da
+HUD e no cartão do Início — e em nenhum outro lugar, uma vez por tela.
+
+Proibido na descrição (o gate `--check-tools` bloqueia):
+
+| Não pode | Onde esse dado deve ficar |
+|---|---|
+| contagem (`161 com NM`, `5577 cidades`) | rodapé/estado da ferramenta, ao abrir |
+| data (`2026-11-23`, `base de …`) | rodapé/estado |
+| rótulos como `agora:`, `fonte:` | dica do campo, se for o caso — sem eco de conteúdo |
+| separadores `•`, `·`, ` \| ` | a frase é uma só |
+| quebra de linha | — |
+| mais de 140 caracteres | use `longDescription`, que existe para isso |
+
+Regra irmã (mesma família de defeito): a HUD **não repete** a descrição no rodapé ao abrir os campos,
+e a dica do campo **não mostra o conteúdo da área de transferência**. Foi exatamente isso que produziu
+o campo `• agora: • agora: cidades • 161 com NM • 2026-11-23` no `:mkt`, `:macv` e `:sse`.
+
 ## Como isso chega às próximas sessões
 
 - `SPEC.md` §7 (contrato), §5.1 (atalho), §6.5/§6.6 (credenciais), §13 (gate).

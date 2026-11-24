@@ -14,14 +14,15 @@ public sealed class ToolRow
     public ToolRow(ToolManifest tool)
     {
         Tool = tool;
-        Icon = tool.IconGlyph;
+        IconVisual = ToolIcons.Create(tool, 22, 16);
         Name = tool.Name;
         Description = tool.Description;
         Trigger = SettingsService.TriggerFor(tool);
     }
 
     public ToolManifest Tool { get; }
-    public string Icon { get; }
+    /// <summary>Glifo ou imagem: o que o manifesto declarar em "icon".</summary>
+    public FrameworkElement IconVisual { get; }
     public string Name { get; }
     public string Description { get; }
     public string Trigger { get; }
@@ -72,6 +73,7 @@ public sealed partial class CommandHud : Window
             UiKit.ForceForeground(this);
             _shownAt = DateTime.UtcNow;
 
+            ToolManifest? abrirCampos = null;
             if (!string.IsNullOrWhiteSpace(toolId))
             {
                 var tool = App.Catalog.Find(toolId);
@@ -80,12 +82,17 @@ public sealed partial class CommandHud : Window
                     SearchBox.Text = tool.Name;
                     var row = _rows.FirstOrDefault(r => ReferenceEquals(r.Tool, tool));
                     if (row is not null) ResultsList.SelectedItem = row;
+
+                    // `--hud <id>` abre já nos campos — o mesmo estado de digitar o nome e dar Enter.
+                    if (tool.Inputs.Count > 0 && !tool.IsDataset) abrirCampos = tool;
                 }
             }
 
             SearchBox.Focus(FocusState.Programmatic);
             _suppressHide = false;
             ApplySize();
+
+            if (abrirCampos is not null) ShowFields(abrirCampos);
 
             AppPaths.Log($"ShowHud: visivel={AppWindow.IsVisible} pos={AppWindow.Position.X},{AppWindow.Position.Y} " +
                          $"size={AppWindow.Size.Width}x{AppWindow.Size.Height} fg={Native.GetForegroundWindow()}");
@@ -190,7 +197,9 @@ public sealed partial class CommandHud : Window
         ResultsList.Visibility = Visibility.Visible;
         var keep = previousId is null ? null : _rows.FirstOrDefault(r => r.Tool.Id == previousId);
         ResultsList.SelectedItem = keep ?? _rows[0];
-        if (string.IsNullOrWhiteSpace(StatusText.Text) || !StatusText.Text.StartsWith("No", StringComparison.Ordinal))
+        if (SettingsService.Current.HideToolCount)
+            StatusText.Text = "";   // preferência do usuário: rodapé sem a contagem
+        else if (string.IsNullOrWhiteSpace(StatusText.Text) || !StatusText.Text.StartsWith("No", StringComparison.Ordinal))
             StatusText.Text = $"{_rows.Count} ferramenta(s).";
         ApplySize();
     }
@@ -353,7 +362,10 @@ public sealed partial class CommandHud : Window
         FieldsPanel.Children.Add(actions);
 
         FieldsPanel.Visibility = Visibility.Visible;
-        StatusText.Text = tool.Description;
+
+        // O rodapé NÃO repete a descrição: ela já está na linha do resultado e, ao abrir os campos,
+        // repetia o mesmo texto duas vezes na mesma tela (regra R12).
+        StatusText.Text = "";
         ApplySize();
         if (_boxes.Count > 0)
         {
@@ -371,10 +383,13 @@ public sealed partial class CommandHud : Window
             hint.Text = "Enter para consultar.";
             return;
         }
-        var clip = ClipboardService.GetText();
-        hint.Text = string.IsNullOrWhiteSpace(clip)
-            ? "vazio = área de transferência · clipboard está vazio"
-            : $"vazio = área de transferência · agora: {Truncate(clip, 60)}";
+
+        // Sem eco do conteúdo da área de transferência. Antes o rodapé virava "agora: <clipboard>",
+        // o que duplicava metadado e jogava texto alheio para dentro da HUD (regra R12).
+        var declarado = string.IsNullOrWhiteSpace(field.Hint) ? "" : field.Hint.Trim();
+        hint.Text = declarado.Length > 0
+            ? $"{declarado} · vazio usa a área de transferência"
+            : "vazio usa a área de transferência";
     }
 
     private void OnFieldKeyDown(object sender, KeyRoutedEventArgs e)

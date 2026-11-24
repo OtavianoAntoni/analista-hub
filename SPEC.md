@@ -216,6 +216,37 @@ Prova depois da correção (mesmo teste):
 Isto é: o Alt+F4 não fecha mais, abrir pelo ícone reaproveita a janela existente e o conteúdo está
 renderizado. Ver `docs/REGRAS-DE-FERRAMENTA.md` (R7).
 
+### 5.5 Atalho global: troca transacional e persistência verificada
+
+Trocar o atalho nunca deixa o usuário sem busca rápida:
+
+- Se o Windows recusar a combinação (outro programa já usa), o atalho anterior **volta a valer na
+  mesma chamada** e o valor salvo **não muda** — a alteração não salva é o comportamento correto, e a
+  tela informa o motivo (`Outro programa já usa Ctrl+Alt+F7. O atalho Ctrl+Alt+Space continua valendo.`).
+- Quando o registro dá certo, o app grava `settings.json` de forma **atômica** (temporário + troca) e
+  **confere o arquivo**; se a gravação não pegou, avisa com o caminho em vez de perder a preferência em
+  silêncio no próximo início.
+- `AnalistaHub.exe --try-hotkey "<combo>"` responde sem abrir janela: combinação salva, se está
+  registrada, se a tentada foi liberada e qual continua ativa.
+
+Evidência: com `Ctrl+Alt+F7` ocupado por outro processo, `--try-hotkey` devolveu
+`tentado_registrado=false`, `erro_tentado="Outro programa já usa… continua valendo"` e
+`ainda_ativo="Ctrl+Alt+Space"`; com `Ctrl+Shift+F9` (livre) devolveu `ok=true`. O `settings.json`
+permaneceu válido, sem `.tmp`, com o atalho anterior.
+
+### 5.6 HUD: a descrição aparece uma vez só
+
+- Ao abrir os campos de uma ferramenta, o **rodapé não repete** a descrição que já está na linha do
+  resultado (era texto duplicado na mesma tela).
+- A **dica do campo** mostra o que o campo espera (ex.: `aceita CIDR /32`) e a instrução
+  `vazio usa a área de transferência`. Ela **não ecoa o conteúdo do clipboard** — era daí que vinha o
+  campo `• agora: …`, que ainda por cima duplicava quando o clipboard já trazia metadado da Consulta.
+- `description` do manifesto é uma frase, sem contagem/data/metadado; o gate recusa fora da regra
+  (`docs/REGRAS-DE-FERRAMENTA.md`, R12).
+- A **contagem de ferramentas** no rodapé (`3 ferramenta(s).`) pode ser ocultada em
+  Configurações → **Busca rápida → Ocultar contagem de ferramentas** (`HideToolCount`). Quando a busca
+  não encontra nada, o aviso continua aparecendo — ali o número é o próprio recado.
+
 ---
 
 ## 6. Serviços do HUB
@@ -489,13 +520,35 @@ Rodar a qualquer momento: `build\check-tools.ps1` ou `AnalistaHub.exe --check-to
 
 ---
 
-## 14. Evidência usada
+## 14. Configuração local e separação de dados (repo público)
+
+O repositório pode ser público porque **não carrega identificador de infraestrutura**:
+
+| O que | Onde vive | Versionado |
+|---|---|---|
+| Endereço do serviço, url de validação, caminho de cofre | `%LOCALAPPDATA%\AnalistaHub\config.local.json` | não (`*.local.json`) |
+| Modelo das chaves, com `CHANGEME` | `config.example.json` | sim |
+| Redes internas da Consulta (NM/OLT/VPN) | `%LOCALAPPDATA%\AnalistaHub\sse-rede.local.json` | não |
+| Base pública (município · UF · sigla ANATEL) | `src/AnalistaHub/data/sse-cidades.json` | sim |
+| Scripts das ferramentas | `src/AnalistaHub/tools/*.ps1` | sim (sem credencial e sem caminho de cofre) |
+
+O manifesto referencia `${CFG:chave}`; `ToolCatalog.AplicarConfigLocal` resolve uma vez no carregamento.
+Chave ausente entra em `LocalConfig.Faltando` e aparece em `--check-tools` no campo **avisos** —
+nunca em `problemas`, porque catálogo válido e instalação completa são coisas diferentes.
+
+Junção da rede interna é por **nome sem acento + UF**: só o nome colide (há municípios homônimos em
+estados diferentes), e a primeira versão desta separação perdeu uma cidade e inflou outras até esse
+ajuste.
+
+---
+
+## 15. Evidência usada
 
 | Afirmação | Evidência |
 |---|---|
-| Campos e modos do SN por IP | `%APPDATA%\espanso\scripts\mkt_serial.ps1` (303 linhas) |
-| Gatilhos `:mkt`, `:macv`, `:macc`, `:mact` | `espanso\match\mkt_serial.yml`, `espanso\match\mac_vendor.yml` |
-| Campos e cache do MAC vendor | `%APPDATA%\espanso\scripts\mac_vendor.ps1` (252 linhas) |
+| Campos e modos do SN por IP | `src/AnalistaHub/tools/mkt_serial.ps1` (veio de `%APPDATA%\espanso\scripts` em 24/11/2026) |
+| Gatilhos `:mkt`, `:macv`, `:macc`, `:mact` | histórico: `espanso\match\mkt_serial.yml`, `espanso\match\mac_vendor.yml` — o HUB não usa Espanso |
+| Campos e cache do MAC vendor | `src/AnalistaHub/tools/mac_vendor.ps1` (veio de `%APPDATA%\espanso\scripts` em 24/11/2026) |
 | Cofre de credenciais, seção 5 | `mkt_serial.ps1` linhas 83 e 112-129; `Documents\Processos\Analyser\credenciais\cofre.md` |
 | Os quatro itens por ferramenta e o atalho central | `IDEA.md` §Experiência de uso, §Princípios, §Escopo |
 | Popup perto do cursor, 12 s, clique fecha | `mkt_serial.ps1` linhas 58-76 |

@@ -94,6 +94,7 @@ $exe = "$env:LOCALAPPDATA\Programs\AnalistaHub\AnalistaHub.exe"
 & $exe --probe mkt-serial             # servico_responde:true e credenciais completo:true
 & $exe --validate-cred mkt-serial     # {"ok":true,"estado":"ok","mensagem":"auth_success"}
 & $exe --check-tools                  # gate das regras: {"ok":true,"problemas":[]}
+& $exe --try-hotkey "Ctrl+Alt+F9"     # diz se o Windows libera o atalho agora, sem abrir janela
 & $exe --test mac-vendor "F4:8E:38"   # {"ok":true,"valor":"Dell Inc."}
 & $exe --test mkt-serial "10.0.0.1"   # {"ok":true,"valor":"<SN>1"}
 & $exe --set-cred mkt-serial passwd   # valor vem do STDIN (não aparece no histórico do shell)

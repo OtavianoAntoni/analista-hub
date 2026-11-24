@@ -117,6 +117,17 @@ public partial class App : Application
             sseTimer.Start();
         }
 
+        if (cliArgs.Contains("--hud"))
+        {
+            // teste/diagnóstico: abre a HUD; com um id depois da flag, já nos campos da ferramenta
+            var alvo = cliArgs.SkipWhile(a => a != "--hud").Skip(1).FirstOrDefault(a => !a.StartsWith("--"));
+            var hudTimer = MainWin.DispatcherQueue.CreateTimer();
+            hudTimer.Interval = TimeSpan.FromMilliseconds(900);
+            hudTimer.IsRepeating = false;
+            hudTimer.Tick += (_, _) => HudController.Show(alvo);
+            hudTimer.Start();
+        }
+
         if (cliArgs.Contains("--arm-hotkey"))
             MainWin.ArmHotkeyCapture();
 
@@ -250,7 +261,7 @@ public partial class App : Application
 
         if (items.Count > 0) items.Add(TrayMenuItem.Separator());
 
-        items.Add(TrayMenuItem.Command("Buscar ferramenta…", HudController.Show));
+        items.Add(TrayMenuItem.Command("Buscar ferramenta…", () => HudController.Show()));
         items.Add(TrayMenuItem.Command("Configurações", () =>
         {
             ShowMainWindow();
@@ -403,13 +414,26 @@ public partial class App : Application
     {
         error = "";
         if (Hotkey is null) { error = "Atalho global não inicializado."; return false; }
+
         var ok = Hotkey.Register(combo, out error);
-        if (ok)
+        if (!ok) return false;
+
+        Settings.Hotkey = combo;
+        SettingsService.Save();
+
+        // Confere no disco: se a gravação falhou (arquivo travado, disco cheio), o usuário precisa
+        // saber AGORA — senão a alteração "some" na próxima abertura e vira um mistério.
+        // A comparação é pelo valor lido do JSON, não pelo texto: o serializador grava "+" como
+        // \u002B, então procurar a string crua daria falso alarme.
+        var relido = SettingsService.ReadFromDisk();
+        if (relido is null || !string.Equals(relido.Hotkey, combo, StringComparison.Ordinal))
         {
-            Settings.Hotkey = combo;
-            SettingsService.Save();
+            error = $"O atalho {combo} está ativo agora, mas não consegui gravar em {AppPaths.SettingsFile}. " +
+                    "Ele volta ao anterior quando o app reiniciar.";
+            AppPaths.Log($"settings: atalho ativo mas não confirmado no disco — salvo=\"{relido?.Hotkey}\" esperado=\"{combo}\"");
         }
-        return ok;
+
+        return true;
     }
 
     public static void ReloadCatalog()

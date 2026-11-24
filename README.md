@@ -103,6 +103,71 @@ escolha entre vários resultados.
 O arquivo da base é procurado primeiro em `%LOCALAPPDATA%\AnalistaHub\` (atualização sem reinstalar)
 e depois em `data\` ao lado do executável. Detalhes em `docs/FERRAMENTA-CONSULTA-SSE.md`.
 
+## Configuração local (o que não vai para o repositório)
+
+Endereço de serviço, caminho de cofre e qualquer identificador de infraestrutura **não ficam no
+manifesto**. O manifesto traz `${CFG:chave}` e o app resolve com o arquivo da máquina:
+
+```
+%LOCALAPPDATA%\AnalistaHub\config.local.json      ← seus valores (ignorado pelo git)
+config.example.json                               ← modelo versionado, com CHANGEME
+```
+
+```json
+{
+  "mkt-serial.host": "10.0.0.10",
+  "mkt-serial.url":  "http://10.0.0.10:3113/api/auth_ep",
+  "mkt-serial.cofre": "C:\\caminho\\do\\cofre.md"
+}
+```
+
+Sem uma chave, a ferramenta continua aparecendo no catálogo — `--check-tools` lista o que falta no
+campo `avisos` (não em `problemas`: o repositório público não tem endereço nenhum, então ausência de
+configuração é assunto da instalação, não do catálogo).
+
+## Base de dados da Consulta SSE
+
+A base é dividida em duas partes, por um motivo simples: sigla/UF são dado público, NM/OLT/VPN são
+rede interna.
+
+| Arquivo | Onde | Versionado? | Conteúdo |
+|---|---|---|---|
+| `data/sse-cidades.json` | repositório / pasta do app | **sim** | 5.577 municípios + sigla Anatel + UF, sem rede |
+| `sse-rede.local.json` | `%LOCALAPPDATA%\AnalistaHub\` | **não** | 161 cidades com NM · OLT · VPN (181 linhas) |
+
+Sem o arquivo local, a consulta funciona normalmente e mostra sigla + estado (o log avisa
+`rede local ausente`). Para gerar os dois a partir de uma base completa:
+
+```
+python build/split-sse-local.py <raiz_do_repo> <base_completa.json>
+```
+
+## Ícone de cada ferramenta
+
+Trocar o ícone de uma ferramenta é **colocar um arquivo e apontar no manifesto** — sem recompilar nada
+além do build normal:
+
+1. Copie o arquivo para `src\AnalistaHub\tools\` (ex.: `sn-rb.ico`), com 16, 24, 32, 48 e 256 px.
+2. No manifesto da ferramenta (`tools\<id>.json`), troque o campo `icon`:
+
+   ```json
+   "icon": "sn-rb.ico"
+   ```
+
+   O valor antigo era um glifo, ex.: `"icon": "\uE968"`.
+3. `build\publish.ps1`. Se o arquivo não existir, o gate `--check-tools` falha e diz o caminho
+   esperado.
+
+O ícone aparece na barra lateral, no título da ferramenta e na lista da HUD. Sem arquivo, vale o
+glifo (regra R10 em `docs/REGRAS-DE-FERRAMENTA.md`).
+
+## Escrever a descrição (regra R12)
+
+`description` é **uma frase** dizendo o que a ferramenta faz — é o que aparece na linha da HUD e no
+cartão. Nada de contagem de registros, data da base, `agora:`, `•` ou quebra de linha: isso é estado e
+vai para o rodapé ao abrir a ferramenta. O gate recusa descrição fora da regra, e `longDescription`
+existe para o texto longo.
+
 ## Adicionar uma ferramenta (sem recompilar)
 
 **Leia `docs/REGRAS-DE-FERRAMENTA.md` antes.** As regras de gatilho, validação de credencial e status

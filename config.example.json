@@ -1,0 +1,11 @@
+{
+  "_leia-me": [
+    "Modelo da configuração local do Analista Hub. Copie para %LOCALAPPDATA%\\AnalistaHub\\config.local.json",
+    "e preencha os valores desta máquina. O config.local.json NUNCA é versionado (está no .gitignore).",
+    "O manifesto das ferramentas usa ${CFG:chave} e o app substitui pelo valor daqui.",
+    "Sem uma chave, a ferramenta continua aparecendo, mas avisa o que falta em --check-tools (campo avisos)."
+  ],
+  "mkt-serial.host": "CHANGEME-host-do-inventario",
+  "mkt-serial.url": "http://CHANGEME-host-do-inventario:3113/api/auth_ep",
+  "mkt-serial.cofre": "CHANGEME-caminho-do-cofre-de-credenciais"
+}

@@ -6,9 +6,12 @@
   "longDescription": "Recebe um MAC (com ou sem separador) e devolve o fabricante dono do prefixo de 6 dígitos. MACs localmente administrados — os aleatórios de celular e de Wi-Fi privado — não têm fabricante na base e são recusados com explicação, em vez de virarem erro genérico. As consultas ficam em cache local, o que evita o limite de requisições da API.",
   "trigger": ":macv",
   "icon": "\uE701",
-  "script": "%APPDATA%/espanso/scripts/mac_vendor.ps1",
+  "script": "mac_vendor.ps1",
   "interpreter": "powershell",
-  "modeArgs": [ "-Mode", "type" ],
+  "modeArgs": [
+    "-Mode",
+    "type"
+  ],
   "inputs": [
     {
       "key": "mac",
@@ -24,7 +27,11 @@
   ],
   "output": {
     "default": "clipboard",
-    "allowed": [ "clipboard", "type", "notify" ],
+    "allowed": [
+      "clipboard",
+      "type",
+      "notify"
+    ],
     "valueLabel": "nome do fabricante",
     "successLabel": ""
   },
@@ -35,7 +42,10 @@
   },
   "timeoutSeconds": 12,
   "logFile": "%TEMP%/mac_vendor.log",
-  "examples": [ "00:1A:2B:3C:4D:5E", "001a2b" ],
+  "examples": [
+    "00:1A:2B:3C:4D:5E",
+    "001a2b"
+  ],
   "notes": "Existe limite de requisições por minuto na API pública; o cache local evita a maior parte delas.",
   "legacyErrorPopup": true,
   "stdoutErrorPatterns": [

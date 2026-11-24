@@ -27,6 +27,18 @@ public sealed class AppSettings
     /// <summary>Painel da Consulta SSE: mostra NM/OLT/VPN? (botão de alternância "NMs").</summary>
     public bool SseShowNodes { get; set; } = true;
 
+    // ---- preferências de tela (Bloco 5) ----
+    /// <summary>HUD: esconder o rodapé "N ferramenta(s)".</summary>
+    public bool HideToolCount { get; set; }
+    /// <summary>Consulta SSE: cartões montados por busca (padrão 30).</summary>
+    public int SseMaxRows { get; set; } = 30;
+    /// <summary>Consulta SSE: mostrar "somente cadastro · sem NM" nos cartões sem rede (padrão: oculto).</summary>
+    public bool SseShowNoNodes { get; set; }
+    /// <summary>Consulta SSE: mostrar a linha "fonte: …" no rodapé (padrão: oculto).</summary>
+    public bool SseShowSource { get; set; }
+    /// <summary>Consulta SSE: mostrar o resumo da base no cabeçalho (padrão: oculto).</summary>
+    public bool SseShowBaseInfo { get; set; }
+
     // ---- atualizações ----
     /// <summary>Procurar atualização sozinho, no máximo uma vez por dia.</summary>
     public bool AutoCheckUpdates { get; set; } = true;
@@ -99,14 +111,40 @@ public static class SettingsService
         if (string.IsNullOrWhiteSpace(Current.ToolsFolder)) Current.ToolsFolder = AppPaths.ToolsDir;
     }
 
+    /// <summary>
+    /// Grava as preferências de forma ATÔMICA: escreve um temporário e troca de uma vez. Se algo
+    /// falhar no meio (arquivo travado por antivírus, disco cheio), o settings.json antigo continua
+    /// íntegro em vez de virar um arquivo truncado — que faria o app voltar aos padrões.
+    /// </summary>
     public static void Save()
     {
+        var tmp = AppPaths.SettingsFile + ".tmp";
         try
         {
             AppPaths.Ensure();
-            File.WriteAllText(AppPaths.SettingsFile, JsonSerializer.Serialize(Current, Options));
+            File.WriteAllText(tmp, JsonSerializer.Serialize(Current, Options));
+            File.Move(tmp, AppPaths.SettingsFile, overwrite: true);
         }
-        catch (Exception ex) { AppPaths.Log("settings save falhou: " + ex.Message); }
+        catch (Exception ex)
+        {
+            AppPaths.Log("settings save falhou: " + ex.Message);
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+        }
+    }
+
+    /// <summary>Lê o que está gravado no disco agora (não mexe no estado em memória).</summary>
+    public static AppSettings? ReadFromDisk()
+    {
+        try
+        {
+            if (!File.Exists(AppPaths.SettingsFile)) return null;
+            return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(AppPaths.SettingsFile));
+        }
+        catch (Exception ex)
+        {
+            AppPaths.Log("settings leitura do disco falhou: " + ex.Message);
+            return null;
+        }
     }
 
     public static string OutputModeFor(string toolId, string fallback) =>

@@ -66,7 +66,8 @@ internal static class Native
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
 
     // ---------- hotkey global ----------
-    [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
     [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     public const uint MOD_ALT = 0x0001;

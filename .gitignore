@@ -13,6 +13,26 @@ cli-last.json
 # backups/artefatos locais (não versionar)
 *.zip
 
+# configuração local (nunca versionar)
+config.local.json
+*.local.json
+secrets/
+*.env
+.env.*
+
+# artefatos que nascem em tools/ em tempo de execução (o token é um JWT de sessão!)
+src/AnalistaHub/tools/*token*.json
+src/AnalistaHub/tools/*_cache.json
+src/AnalistaHub/tools/*.log
+src/AnalistaHub/tools/*.bak*
+src/AnalistaHub/tools/*.local.json
+
+# chaves/certificados, se algum dia existirem
+*.pem
+*.key
+*.p12
+id_rsa*
+
 # sistema
 Thumbs.db
 desktop.ini

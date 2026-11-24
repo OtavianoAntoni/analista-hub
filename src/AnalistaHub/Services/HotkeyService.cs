@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace AnalistaHub.Services;
 
 /// <summary>Atalho global (RegisterHotKey) pendurado na janela principal.</summary>
@@ -20,26 +22,55 @@ public sealed class HotkeyService : IDisposable
 
     public string CurrentCombo { get; private set; } = "";
 
+    /// <summary>
+    /// Troca o atalho global. É TRANSACIONAL: se o Windows recusar o novo (outro programa já usa),
+    /// o atalho anterior volta a valer na hora — o usuário nunca fica sem busca rápida por causa de
+    /// uma tentativa recusada. O valor anterior continua no settings.json, então a "alteração não
+    /// salva" é o comportamento correto: nada mudou de fato.
+    /// </summary>
     public bool Register(string combo, out string error)
     {
         error = "";
-        Unregister();
 
         if (!TryParse(combo, out var modifiers, out var vk))
         {
             error = $"Atalho inválido: \"{combo}\". Use algo como Ctrl+Alt+Space.";
-            return false;
+            return false;   // nada registrado é tocado
         }
+
+        var anterior = CurrentCombo;
+        var tinhaAnterior = _registered;
+        Unregister();
 
         if (!Native.RegisterHotKey(_hwnd, HotkeyId, modifiers, vk))
         {
-            error = $"O Windows não liberou o atalho {combo} (já está em uso por outro programa).";
-            AppPaths.Log("RegisterHotKey falhou: " + combo);
+            var code = Marshal.GetLastWin32Error();
+            error = code == 1409
+                ? $"Outro programa já usa {combo}."
+                : $"O Windows não liberou {combo} (código {code}).";
+            AppPaths.Log($"RegisterHotKey falhou: {combo} (erro {code})" +
+                         (tinhaAnterior ? $" — restaurando {anterior}" : ""));
+
+            // desfaz a transação: volta o atalho que funcionava
+            if (tinhaAnterior && !string.IsNullOrWhiteSpace(anterior) &&
+                TryParse(anterior, out var mods0, out var vk0) &&
+                Native.RegisterHotKey(_hwnd, HotkeyId, mods0, vk0))
+            {
+                _registered = true;
+                CurrentCombo = anterior;
+                error += $" O atalho {anterior} continua valendo.";
+            }
+            else if (tinhaAnterior)
+            {
+                AppPaths.Log($"não foi possível restaurar {anterior} — fique sem atalho até reiniciar");
+            }
+
             return false;
         }
 
         _registered = true;
         CurrentCombo = combo;
+        AppPaths.Log("atalho global registrado: " + combo);
         return true;
     }
 

@@ -1,0 +1,8 @@
+10.0.0.1==>10.0.0.1
+10.0.0.1==>10.0.0.1
+Inventário==>Inventário
+cofre.md==>cofre.md
+OPERADORA-A==>OPERADORA-A
+OPERADORA-B==>OPERADORA-B
+GESTOR-A==>GESTOR-A
+OLT-A==>OLT-A

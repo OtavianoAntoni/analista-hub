@@ -57,6 +57,38 @@ public sealed class ToolCatalog
         return catalog;
     }
 
+    /// <summary>
+    /// Troca ${CFG:chave} pelos valores da configuração local (endereço de serviço, url de validação,
+    /// exemplos e placeholders). Chave ausente entra em <see cref="LocalConfig.Faltando"/> e o gate
+    /// avisa — a ferramenta continua listada, sem estourar.
+    /// </summary>
+    private static void AplicarConfigLocal(ToolManifest tool)
+    {
+        if (tool.Network is not null)
+        {
+            tool.Network.Label = LocalConfig.Resolve(tool.Network.Label);
+            tool.Network.Host = LocalConfig.Resolve(tool.Network.Host);
+        }
+
+        if (tool.Credentials?.Validation is { } validation)
+            validation.Url = LocalConfig.Resolve(validation.Url);
+
+        tool.Examples = LocalConfig.ResolveAll(tool.Examples);
+
+        foreach (var input in tool.Inputs)
+        {
+            input.Placeholder = LocalConfig.Resolve(input.Placeholder);
+            input.Hint = LocalConfig.Resolve(input.Hint);
+        }
+
+        if (tool.Credentials is not null)
+        {
+            tool.Credentials.LegacyFile = LocalConfig.Resolve(tool.Credentials.LegacyFile);
+            foreach (var field in tool.Credentials.Fields)
+                field.Placeholder = LocalConfig.Resolve(field.Placeholder);
+        }
+    }
+
     private static ToolManifest? Parse(string file, bool fromUser)
     {
         try
@@ -67,6 +99,20 @@ public sealed class ToolCatalog
             tool.SourcePath = file;
             tool.FromUserFolder = fromUser;
 
+            // Artefatos de runtime que nascem em tools/ (cache de token, cache de OUI, log em JSON)
+            // não são manifestos: ignorar em silêncio. Sem isso eles aparecem como "ferramenta com
+            // problema" na tela — foi o que aconteceu ao trazer os scripts para dentro do repo.
+            var declarado = json.Contains("\"id\"", StringComparison.OrdinalIgnoreCase);
+            if (!declarado &&
+                string.IsNullOrWhiteSpace(tool.Id) &&
+                string.IsNullOrWhiteSpace(tool.Name) &&
+                string.IsNullOrWhiteSpace(tool.Script))
+                return null;
+
+            // Identificador de infraestrutura não mora no manifesto versionado: o que vier como
+            // ${CFG:chave} é resolvido aqui, uma vez, pelo config.local.json da máquina.
+            AplicarConfigLocal(tool);
+
             var problems = new List<string>();
             if (string.IsNullOrWhiteSpace(tool.Id)) problems.Add("sem \"id\"");
             if (string.IsNullOrWhiteSpace(tool.Name)) problems.Add("sem \"name\"");
@@ -76,7 +122,15 @@ public sealed class ToolCatalog
                 else if (!tool.DatasetExists) problems.Add($"base não encontrada: {tool.ExpandedDataset}");
             }
             else if (string.IsNullOrWhiteSpace(tool.Script)) problems.Add("sem \"script\"");
-            else if (!tool.ScriptExists && !IgnoreMissingScripts) problems.Add($"script não encontrado: {tool.ExpandedScript}");
+            else
+            {
+                // Regra R9: o script mora ao lado do manifesto. Caminho absoluto ou em pasta de outro
+                // programa não é publicado — e o motivo aparece na tela, não um "não encontrado" seco.
+                var localProblem = ScriptLocationProblem(tool);
+                if (localProblem is not null) problems.Add(localProblem);
+                else if (!tool.ScriptExists && !IgnoreMissingScripts) problems.Add($"script não encontrado: {tool.ExpandedScript}");
+            }
+
             if (problems.Count > 0) tool.LoadError = string.Join("; ", problems);
             return tool;
         }
@@ -84,6 +138,24 @@ public sealed class ToolCatalog
         {
             return Broken(file, fromUser, ex.Message);
         }
+    }
+
+    /// <summary>Regra R9 (docs/REGRAS-DE-FERRAMENTA.md): script ao lado do manifesto, sem caminho.</summary>
+    private static string? ScriptLocationProblem(ToolManifest tool)
+    {
+        if (tool.Script.Contains("espanso", StringComparison.OrdinalIgnoreCase))
+            return "script aponta para a pasta do Espanso — use o arquivo ao lado do manifesto";
+
+        if (Path.IsPathRooted(tool.Script))
+            return "script com caminho absoluto — use só o nome do arquivo (ele mora em tools/)";
+
+        var scriptDir = Path.GetDirectoryName(tool.ExpandedScript);
+        var manifestDir = Path.GetDirectoryName(tool.SourcePath);
+        if (!string.IsNullOrWhiteSpace(scriptDir) && !string.IsNullOrWhiteSpace(manifestDir) &&
+            !string.Equals(scriptDir, manifestDir, StringComparison.OrdinalIgnoreCase))
+            return "script fora da pasta da ferramenta: " + tool.ExpandedScript;
+
+        return null;
     }
 
     private static ToolManifest Broken(string file, bool fromUser, string reason) => new()

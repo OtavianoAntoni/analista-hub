@@ -25,6 +25,19 @@ inteiro (cadastro + acesso), sem o analista ter de lembrar qual base consultar.
 
 ## 2. Base de dados (schema 3)
 
+Duas partes, por sensibilidade do dado:
+
+| Parte | Arquivo | Versionado | Conteúdo |
+|---|---|---|---|
+| pública | `data/sse-cidades.json` | sim | 5.577 municípios: `n` (nome), `k` (nome sem acento), `uf`, `sigla` ANATEL, `rows: []` |
+| interna | `%LOCALAPPDATA%\AnalistaHub\sse-rede.local.json` | **não** | 161 cidades com `rows` (NM · OLT · VPN), 181 linhas |
+
+O app carrega a base pública e, se o arquivo interno existir, mescla por **`k` + UF** (nome sozinho
+colide entre estados). Sem o arquivo interno a consulta funciona: mostra sigla e estado e o log
+registra `rede local ausente`.
+
+Gerador: `build/split-sse-local.py` (a partir de uma base completa, com as redes).
+
 `data/sse-cidades.json` — 492 KB, gerado por `build_merge.py` a partir de duas fontes:
 
 | Fonte | Linhas | Papel |
@@ -78,7 +91,8 @@ A lista mostra no máximo **300 cartões** por busca (a base tem 5577); o rodap�
 
 ### 3.3 Cartão de resultado
 `CIDADE` + badge `UF` + badge destacado `SIGLA ANATEL`; abaixo, uma linha por rede com
-`NM | OLT | VPN`. Cidade sem planilha de OLT mostra `somente cadastro · sem NM`.
+`NM | OLT | VPN`. Cidade sem planilha de OLT só mostra `somente cadastro · sem NM` **se** a opção
+"Dados extras → Registro de NM por cidade" estiver ligada (padrão: oculta).
 
 ### 3.4 Botão "NMs" (toggle)
 No cabeçalho, à direita do título. Liga e desliga a exibição das **informações de acesso**
@@ -88,6 +102,26 @@ No cabeçalho, à direita do título. Liga e desliga a exibição das **informa�
 - estado **desligado** = o cartão fica em cidade + UF + sigla;
 - a escolha é gravada em `settings.json` (`SseShowNodes`) e volta na próxima abertura;
 - o texto **copiado não muda** com o botão: cópia sempre o que existe (sigla + redes).
+
+### 3.4.1 Menu "Dados extras" (engrenagem)
+
+Botão `⚙` ao lado do "NMs". Abre um painel com o que fica **fora** da leitura principal — tudo
+nasce desligado, então a tela abre limpa:
+
+| Opção | Chave em `settings.json` | Padrão | O que faz |
+|---|---|---|---|
+| Registro de NM por cidade | `SseShowNoNodes` | desligado | mostra `somente cadastro · sem NM` nos cartões sem rede |
+| Informação de fonte | `SseShowSource` | desligado | mostra a linha `fonte: <caminho da base>` no rodapé |
+| Resumo da base | `SseShowBaseInfo` | desligado | mostra `5577 cidades · 161 com NM · base de …` no cabeçalho |
+| Resultados por busca | `SseMaxRows` | **30** | quantos cartões montar por busca (10 a 500) |
+
+O rodapé mostra `mostrando 30 de 367` quando a busca rende mais que o limite — sem o antigo
+`refine a busca`, que era instrução redundante (digitar já filtra).
+
+**As mesmas opções existem na página da ferramenta, na janela principal** (bloco "Dados extras da
+consulta", logo abaixo de "Base de dados"). É um painel único (`Views/SseExtras.cs`) usado nos dois
+lugares: uma preferência, dois pontos de acesso. Mudar na janela principal atualiza um painel de
+consulta que já esteja aberto.
 
 ### 3.5 Texto copiado (contrato estável)
 

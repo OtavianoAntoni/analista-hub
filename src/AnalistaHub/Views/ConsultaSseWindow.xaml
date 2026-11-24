@@ -27,9 +27,14 @@
                 <TextBlock Text="Cidade → Sigla Anatel · estado · NM/VPN quando houver" FontSize="11"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             </StackPanel>
-            <ToggleButton x:Name="NmsToggle" Grid.Column="2" Content="NMs" FontSize="11.5"
-                          Padding="12,5" CornerRadius="6" VerticalAlignment="Center"
-                          ToolTipService.ToolTip="Mostrar ou ocultar as informações de acesso dos NMs (NM · OLT · VPN)" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                <ToggleButton x:Name="NmsToggle" Content="NMs" FontSize="11.5"
+                              Padding="12,5" CornerRadius="6" VerticalAlignment="Center"
+                              ToolTipService.ToolTip="Mostrar ou ocultar as informações de acesso dos NMs (NM · OLT · VPN)" />
+                <Button x:Name="ExtraButton" FontFamily="Segoe MDL2 Assets" Content="&#xE712;" FontSize="12"
+                        Padding="10,4" CornerRadius="6" VerticalAlignment="Center"
+                        ToolTipService.ToolTip="Dados extras: registro de NM, fonte da base e resumo" />
+            </StackPanel>
             <TextBlock x:Name="HeaderInfo" Grid.Column="3" FontSize="11" VerticalAlignment="Center"
                        Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
         </Grid>

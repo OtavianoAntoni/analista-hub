@@ -25,7 +25,7 @@ public sealed class SseLineRow
 /// <summary>Cartão de uma cidade na lista de resultados.</summary>
 public sealed class SseCityRow
 {
-    public SseCityRow(SseCity city, bool showNodes)
+    public SseCityRow(SseCity city, bool showNodes, bool showNoNodes)
     {
         Source = city;
         Name = city.Name;
@@ -39,7 +39,8 @@ public sealed class SseCityRow
             : new List<SseLineRow>();
 
         NodesVisibility = Rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        NoNodesVisibility = city.HasAccess ? Visibility.Collapsed : Visibility.Visible;
+        // "somente cadastro · sem NM" é opcional: por padrão fica oculto (Dados extras)
+        NoNodesVisibility = !city.HasAccess && showNoNodes ? Visibility.Visible : Visibility.Collapsed;
     }
 
     public SseCity Source { get; }
@@ -64,13 +65,12 @@ public sealed partial class ConsultaSseWindow : Window
 {
     private const double WidthDip = 780;
     private const double HeightDip = 580;
-    /// <summary>Teto de cartões montados por busca — a base nacional tem 5577 cidades.</summary>
-    private const int MaxRows = 300;
 
     private readonly ObservableCollection<SseCityRow> _rows = new();
     private DateTime _shownAt = DateTime.MinValue;
     private bool _suppressHide;
     private bool _showNodes = true;
+    private bool _showNoNodes;
     private bool _syncToggle;
 
     public ConsultaSseWindow()
@@ -91,6 +91,29 @@ public sealed partial class ConsultaSseWindow : Window
         NmsToggle.IsChecked = _showNodes;   // antes de assinar: não dispara evento
         NmsToggle.Checked += OnNmsToggleChanged;
         NmsToggle.Unchecked += OnNmsToggleChanged;
+
+        BuildExtraMenu();
+    }
+
+    /// <summary>
+    /// "Dados extras" no menu ⚙: o painel é o mesmo usado na página da ferramenta na janela principal.
+    /// </summary>
+    private void BuildExtraMenu() =>
+        ExtraButton.Flyout = new Flyout { Content = SseExtras.Build(AplicarExtras) };
+
+    /// <summary>Reaplica as opções de "Dados extras" quando a mudança vem de fora desta janela.</summary>
+    public void AplicarExtrasPublico() => AplicarExtras();
+
+    /// <summary>
+    /// Reaplica o que o painel "Dados extras" controla. Chamado quando o usuário muda uma opção —
+    /// inclusive da janela principal, porque as duas telas leem a mesma preferência.
+    /// </summary>
+    private void AplicarExtras()
+    {
+        _showNoNodes = SettingsService.Current.SseShowNoNodes;
+        HeaderInfo.Visibility = SettingsService.Current.SseShowBaseInfo ? Visibility.Visible : Visibility.Collapsed;
+        SourceText.Visibility = SettingsService.Current.SseShowSource ? Visibility.Visible : Visibility.Collapsed;
+        Refresh();
     }
 
     // ------------------------------------------------------------------ ciclo de vida
@@ -107,6 +130,11 @@ public sealed partial class ConsultaSseWindow : Window
             SourceText.Text = catalog.Loaded
                 ? "fonte: " + catalog.DataPath
                 : catalog.Error ?? "";
+
+            // resumo da base e fonte ficam OCULTOS por padrão; ligados em "Dados extras"
+            HeaderInfo.Visibility = SettingsService.Current.SseShowBaseInfo ? Visibility.Visible : Visibility.Collapsed;
+            SourceText.Visibility = SettingsService.Current.SseShowSource ? Visibility.Visible : Visibility.Collapsed;
+            _showNoNodes = SettingsService.Current.SseShowNoNodes;
 
             // a preferência pode ter mudado em outra janela do app
             _syncToggle = true;
@@ -165,10 +193,11 @@ public sealed partial class ConsultaSseWindow : Window
         var previous = (ResultsList.SelectedItem as SseCityRow)?.Source.Name;
 
         var matches = catalog.Search(term);
-        var mostrados = matches.Count > MaxRows ? matches.Take(MaxRows).ToList() : matches;
+        var limite = SseExtras.MaxRowsAtual;
+        var mostrados = matches.Count > limite ? matches.Take(limite).ToList() : matches;
 
         _rows.Clear();
-        foreach (var city in mostrados) _rows.Add(new SseCityRow(city, _showNodes));
+        foreach (var city in mostrados) _rows.Add(new SseCityRow(city, _showNodes, _showNoNodes));
 
         var empty = _rows.Count == 0;
         ResultsList.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
@@ -187,7 +216,7 @@ public sealed partial class ConsultaSseWindow : Window
         ResultsList.SelectedItem = keep ?? _rows[0];
 
         StatusText.Text = matches.Count > mostrados.Count
-            ? $"mostrando {mostrados.Count} de {matches.Count} · refine a busca"
+            ? $"mostrando {mostrados.Count} de {matches.Count}"
             : term.Length == 0
                 ? $"{_rows.Count} cidades · digite para filtrar"
                 : $"{_rows.Count} resultado(s)";
@@ -270,5 +299,14 @@ public static class SsePanelController
     public static void HideAll()
     {
         try { _panel?.HidePanel(); } catch { }
+    }
+
+    /// <summary>
+    /// Reaplica as opções de "Dados extras" se o painel já existe — usado quando a mudança vem da
+    /// janela principal, para a tela aberta refletir na hora.
+    /// </summary>
+    public static void AplicarExtras()
+    {
+        try { _panel?.AplicarExtrasPublico(); } catch (Exception ex) { AppPaths.Log("SsePanel.AplicarExtras: " + ex.Message); }
     }
 }

@@ -47,6 +47,19 @@ Write-Host "== executável: $builtVersion"
 if (-not $builtVersion.StartsWith($version)) { throw "versão do exe ($builtVersion) não confere com $version" }
 
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+# Higiene: nada de cache de token (JWT), cache de OUI, log ou backup dentro do zip do release.
+$toolsDir = Join-Path $installDir 'tools'
+if (Test-Path $toolsDir)
+{
+    Get-ChildItem $toolsDir -File | Where-Object {
+        $_.Name -match '(?i)token.*\.json$' -or $_.Name -match '(?i)_cache\.json$' -or
+        $_.Extension -in @('.log', '.bak') -or $_.Name -match '(?i)\.bak'
+    } | ForEach-Object {
+        Remove-Item $_.FullName -Force
+        Write-Host "== removido do pacote: tools\$($_.Name)"
+    }
+}
+
 $zipPath = Join-Path $outDir $AssetName
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 

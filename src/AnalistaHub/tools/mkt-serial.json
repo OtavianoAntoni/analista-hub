@@ -2,11 +2,11 @@
   "id": "mkt-serial",
   "name": "SN da RB pelo IP",
   "category": "MikroTik",
-  "description": "Consulta o serial (SN) de uma RB no inventário Inventário e devolve SN+1.",
-  "longDescription": "Lê o IP de uma RB MikroTik (digitado ou copiado para a área de transferência), autentica no inventário Inventário e devolve o serial cadastrado com o sufixo \"1\". Se o IP não estiver no inventário, devolve 0 — e 0 é resposta, não erro. Falha de rede, login ou servidor nunca vira 0: nesse caso o valor anterior da área de transferência é preservado e o motivo aparece na tela.",
+  "description": "Consulta o serial (SN) de uma RB no inventário e devolve SN+1.",
+  "longDescription": "Lê o IP de uma RB MikroTik (digitado ou copiado para a área de transferência), autentica no inventário e devolve o serial cadastrado com o sufixo \"1\". Se o IP não estiver no inventário, devolve 0 — e 0 é resposta, não erro. Falha de rede, login ou servidor nunca vira 0: nesse caso o valor anterior da área de transferência é preservado e o motivo aparece na tela.",
   "trigger": ":mkt",
   "icon": "\uE968",
-  "script": "%APPDATA%/espanso/scripts/mkt_serial.ps1",
+  "script": "mkt_serial.ps1",
   "interpreter": "powershell",
   "modeArgs": [ "-Mode", "type" ],
   "inputs": [
@@ -29,7 +29,7 @@
     "successLabel": "0 significa: IP não cadastrado no inventário."
   },
   "credentials": {
-    "label": "Inventário Inventário",
+    "label": "Inventário",
     "fields": [
       {
         "key": "user",
@@ -46,9 +46,9 @@
         "placeholder": "senha do inventário"
       }
     ],
-    "legacyFile": "%USERPROFILE%/Documents/Processos/Analyser/credenciais/cofre.md",
+    "legacyFile": "${CFG:mkt-serial.cofre}",
     "validation": {
-      "url": "http://10.0.0.1:3113/api/auth_ep",
+      "url": "${CFG:mkt-serial.url}",
       "method": "POST",
       "contentType": "application/json",
       "bodyTemplate": "{\"type\":\"auth\",\"email\":\"{user}\",\"passw\":\"{passwd}\"}",
@@ -60,7 +60,7 @@
   },
   "network": {
     "label": "Inventário (HTTP)",
-    "host": "10.0.0.1",
+    "host": "${CFG:mkt-serial.host}",
     "port": 3113
   },
   "timeoutSeconds": 14,

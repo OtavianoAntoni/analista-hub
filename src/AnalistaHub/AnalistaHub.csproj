@@ -20,7 +20,7 @@
     <EnableMsixTooling>false</EnableMsixTooling>
     <PublishReadyToRun>false</PublishReadyToRun>
     <WindowsSdkPackageVersion>10.0.19041.57</WindowsSdkPackageVersion>
-    <Version>0.2.0</Version>
+    <Version>2.1.0</Version>
     <Company>Analista Hub</Company>
     <Product>Analista Hub</Product>
   </PropertyGroup>
@@ -34,6 +34,17 @@
 
   <ItemGroup>
     <Content Include="tools\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- scripts das ferramentas: vivem no repositório, ao lado do manifesto (regra R9) -->
+    <Content Include="tools\*.ps1">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- ícones das ferramentas: .ico/.png ao lado do manifesto (regra R10) -->
+    <Content Include="tools\*.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="tools\*.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="data\*.json">

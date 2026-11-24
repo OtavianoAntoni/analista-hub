@@ -67,6 +67,23 @@ if (Test-Path $launcherDir)
     }
 }
 
+# Higiene do pacote: artefatos de runtime que o app cria em tools/ (cache de token = JWT de sessão,
+# cache de OUI, logs, backups) NUNCA podem viajar no zip do release. Se o build copiou algum da
+# pasta de origem, sai aqui — antes da contagem.
+$toolsDir = Join-Path $outDir 'tools'
+if (Test-Path $toolsDir)
+{
+    $lixo = Get-ChildItem $toolsDir -File | Where-Object {
+        $_.Name -match '(?i)token.*\.json$' -or $_.Name -match '(?i)_cache\.json$' -or
+        $_.Extension -in @('.log', '.bak') -or $_.Name -match '(?i)\.bak'
+    }
+    foreach ($f in $lixo)
+    {
+        Remove-Item $f.FullName -Force
+        Write-Host "== removido artefato de runtime: tools\$($f.Name)"
+    }
+}
+
 Write-Host "== pronto: $files arquivos, $totalMb MB em $outDir"
 
 # Gate permanente: nenhuma publicação passa com ferramenta fora das regras

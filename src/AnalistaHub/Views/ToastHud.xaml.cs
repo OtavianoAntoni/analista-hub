@@ -166,9 +166,9 @@ public static class HudController
         catch (Exception ex) { AppPaths.Log("HudController.Toggle: " + ex); }
     }
 
-    public static void Show()
+    public static void Show(string? toolId = null)
     {
-        try { Ensure().ShowHud(null); }
+        try { Ensure().ShowHud(toolId); }
         catch (Exception ex) { AppPaths.Log("HudController.Show: " + ex.Message); }
     }
 

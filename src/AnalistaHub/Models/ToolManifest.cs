@@ -122,9 +122,30 @@ public sealed class ToolManifest
     [JsonIgnore] public string? LoadError { get; set; }
     [JsonIgnore] public bool IsBroken => LoadError is not null;
 
+    /// <summary>
+    /// Caminho do script, resolvido nesta ordem:
+    ///   1. variáveis de ambiente expandidas (%TEMP%, %APPDATA%…), quando o caminho é absoluto;
+    ///   2. caminho relativo à pasta do próprio manifesto (regra do projeto: script mora em tools/).
+    /// Regra: script de ferramenta vive junto do manifesto. Caminho absoluto só é aceito em
+    /// manifesto da pasta do usuário, e o gate --check-tools sinaliza.
+    /// </summary>
     [JsonIgnore]
-    public string ExpandedScript =>
-        string.IsNullOrWhiteSpace(Script) ? "" : Environment.ExpandEnvironmentVariables(Script.Replace('/', '\\'));
+    public string ExpandedScript
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(Script)) return "";
+
+            var raw = Environment.ExpandEnvironmentVariables(Script.Replace('/', '\\'));
+            if (Path.IsPathRooted(raw)) return raw;
+
+            var baseDir = string.IsNullOrWhiteSpace(SourcePath)
+                ? AppContext.BaseDirectory
+                : Path.GetDirectoryName(SourcePath) ?? AppContext.BaseDirectory;
+
+            return Path.GetFullPath(Path.Combine(baseDir, raw));
+        }
+    }
 
     [JsonIgnore]
     public string ExpandedLogFile =>
@@ -148,5 +169,37 @@ public sealed class ToolManifest
     [JsonIgnore]
     public bool DatasetExists => !string.IsNullOrWhiteSpace(ExpandedDataset) && System.IO.File.Exists(ExpandedDataset);
 
-    [JsonIgnore] public string IconGlyph => string.IsNullOrEmpty(Icon) ? "\uE8A7" : Icon;
+    /// <summary>
+    /// Ícone: glifo Segoe MDL2 Assets (padrão, ex.: "\\uE968") **ou** arquivo de imagem (.ico/.png)
+    /// que mora ao lado do manifesto (regra R10). Trocar o ícone de uma ferramenta = colocar o
+    /// arquivo em tools/ e apontar aqui; nenhum código muda.
+    /// </summary>
+    [JsonIgnore]
+    public bool IconIsFile =>
+        !string.IsNullOrWhiteSpace(Icon) &&
+        (Icon.EndsWith(".ico", StringComparison.OrdinalIgnoreCase) ||
+         Icon.EndsWith(".png", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Arquivo de ícone resolvido ao lado do manifesto.</summary>
+    [JsonIgnore]
+    public string ExpandedIconFile
+    {
+        get
+        {
+            if (!IconIsFile) return "";
+
+            var raw = Icon.Replace('/', '\\');
+            if (Path.IsPathRooted(raw)) return raw;
+
+            var baseDir = string.IsNullOrWhiteSpace(SourcePath)
+                ? AppContext.BaseDirectory
+                : Path.GetDirectoryName(SourcePath) ?? AppContext.BaseDirectory;
+
+            return Path.GetFullPath(Path.Combine(baseDir, raw));
+        }
+    }
+
+    [JsonIgnore] public bool IconFileExists => IconIsFile && File.Exists(ExpandedIconFile);
+
+    [JsonIgnore] public string IconGlyph => IconIsFile || string.IsNullOrEmpty(Icon) ? "\uE8A7" : Icon;
 }

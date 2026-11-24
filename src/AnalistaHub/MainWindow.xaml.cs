@@ -16,6 +16,8 @@ public sealed class NavItem
 {
     public string Title { get; init; } = "";
     public string Glyph { get; init; } = "\uE8A7";
+    /// <summary>Ícone já resolvido (glifo do sistema ou arquivo .ico/.png da ferramenta).</summary>
+    public FrameworkElement? IconVisual { get; init; }
     public string? ToolId { get; init; }
     public string Kind { get; init; } = "tool";
 }
@@ -170,16 +172,17 @@ public sealed partial class MainWindow : Window
         var selected = (NavList.SelectedItem as NavItem)?.Title;
         var items = new List<NavItem>
         {
-            new() { Title = "Início", Glyph = "\uE80F", Kind = "home" }
+            new() { Title = "Início", Glyph = "\uE80F", IconVisual = ToolIcons.Glyph("\uE80F", 15), Kind = "home" }
         };
         items.AddRange(App.Catalog.Tools.Select(t => new NavItem
         {
             Title = t.IsBroken ? $"{t.Name} (com problema)" : t.Name,
             Glyph = t.IconGlyph,
+            IconVisual = ToolIcons.Create(t, 20, 15),
             ToolId = t.Id,
             Kind = "tool"
         }));
-        items.Add(new NavItem { Title = "Configurações", Glyph = "\uE713", Kind = "settings" });
+        items.Add(new NavItem { Title = "Configurações", Glyph = "\uE713", IconVisual = ToolIcons.Glyph("\uE713", 15), Kind = "settings" });
 
         NavList.ItemsSource = items;
         NavList.SelectedItem = items.FirstOrDefault(i => i.Title == selected) ?? items[0];
@@ -361,7 +364,7 @@ public sealed partial class MainWindow : Window
 
             var left = new StackPanel { Spacing = 4 };
             var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            titleRow.Children.Add(new FontIcon { Glyph = tool.IconGlyph, FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
+            titleRow.Children.Add(ToolIcons.Create(tool, 18, 14));
             titleRow.Children.Add(new TextBlock { Text = tool.Name, FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
             if (!string.IsNullOrWhiteSpace(tool.Trigger))
                 titleRow.Children.Add(new TextBlock { Text = SettingsService.TriggerFor(tool), FontFamily = new FontFamily("Consolas"), FontSize = 12, Opacity = 0.6, VerticalAlignment = VerticalAlignment.Center });
@@ -575,6 +578,14 @@ public sealed partial class MainWindow : Window
                                     "cadastro de municípios da ANATEL). Para atualizar, rode build_merge.py e copie o " +
                                     "JSON para a pasta de dados do Hub."));
             AddBlock("Base de dados", data);
+
+            // mesmas opções do menu ⚙ do painel de consulta: uma preferência, dois lugares
+            var extras = new StackPanel { Spacing = 10 };
+            extras.Children.Add(Muted(
+                "Estas opções valem para a Consulta SSE — painel flutuante e comando — e ficam gravadas. " +
+                "Se o painel estiver aberto, ele se atualiza na hora."));
+            extras.Children.Add(SseExtras.Build(SsePanelController.AplicarExtras, comTitulo: false));
+            AddBlock("Dados extras da consulta", extras);
         }
 
         // 3 — configurações e credenciais
@@ -1243,6 +1254,26 @@ public sealed partial class MainWindow : Window
         historyPanel.Children.Add(historyToggle);
         historyPanel.Children.Add(clearHistory);
         AddBlock("Histórico", historyPanel);
+
+        // busca rápida (HUD)
+        var hudPanel = new StackPanel { Spacing = 8 };
+        var countToggle = new ToggleSwitch
+        {
+            Header = "Ocultar contagem de ferramentas",
+            IsOn = App.Settings.HideToolCount,
+            OnContent = "oculta",
+            OffContent = "mostra"
+        };
+        countToggle.Toggled += (_, _) =>
+        {
+            App.Settings.HideToolCount = countToggle.IsOn;
+            SettingsService.Save();
+        };
+        hudPanel.Children.Add(countToggle);
+        hudPanel.Children.Add(Muted(
+            "Vale para o rodapé da busca rápida (Ctrl+Alt+Space). A contagem continua aparecendo quando " +
+            "nenhuma ferramenta é encontrada — ali o número é o próprio aviso."));
+        AddBlock("Busca rápida", hudPanel);
 
         // atualizações
         var updatePanel = new StackPanel { Spacing = 8 };

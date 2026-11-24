@@ -17,9 +17,16 @@ public static class Cli
     [DllImport("kernel32.dll")] private static extern bool AttachConsole(int processId);
     private const int ATTACH_PARENT_PROCESS = -1;
 
+    // janela descartável para testar RegisterHotKey fora da interface (--try-hotkey)
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateWindowEx(int exStyle, string className, string windowName, int style,
+        int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
+    [DllImport("user32.dll")] private static extern bool DestroyWindow(IntPtr hwnd);
+
     public static bool IsCliInvocation(string[] args) =>
         args.Length > 0 && args[0] is "--list-tools" or "--test" or "--probe" or "--version" or "--help"
             or "--set-cred" or "--clear-cred" or "--set-trigger" or "--validate-cred" or "--check-tools"
+            or "--try-hotkey"
             or "--check-update" or "--download-update" or "--apply-update";
 
     public static int Run(string[] args, ToolCatalog catalog)
@@ -50,16 +57,56 @@ public static class Cli
                 output.AppendLine("  AnalistaHub.exe --clear-cred <id>   apaga as credenciais guardadas da ferramenta");
                 output.AppendLine("  AnalistaHub.exe --validate-cred <id> confirma as credenciais no serviço");
                 output.AppendLine("  AnalistaHub.exe --check-tools       valida o catálogo (gatilho, script, campos)");
+                output.AppendLine("  AnalistaHub.exe --try-hotkey [combo] testa se o Windows libera o atalho (padrão: o salvo)");
                 output.AppendLine("  AnalistaHub.exe --check-update      consulta o canal de atualização e imprime o resultado");
                 output.AppendLine("  AnalistaHub.exe --download-update   baixa e prepara a atualização (não aplica)");
                 output.AppendLine("  AnalistaHub.exe --apply-update      aplica a atualização preparada e reabre o app");
                 break;
 
+            case "--try-hotkey":
+            {
+                // Diagnóstico do atalho: diz se o Windows libera a combinação AGORA e prova que, quando
+                // ela está ocupada, o atalho salvo continua valendo (a troca é transacional).
+                var combo = args.ElementAtOrDefault(1) ?? SettingsService.Current.Hotkey;
+                var hwnd = CreateWindowEx(0, "STATIC", "hub-hotkey-test", 0, 0, 0, 0, 0,
+                    IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                if (hwnd == IntPtr.Zero)
+                {
+                    output.AppendLine(Json(new { ok = false, erro = "não consegui criar janela de teste" }));
+                    break;
+                }
+
+                using (var svc = new HotkeyService(hwnd))
+                {
+                    var salvo = SettingsService.Current.Hotkey;
+                    var salvoOk = svc.Register(salvo, out var erroSalvo);
+                    var tentadoOk = svc.Register(combo, out var erroTentado);
+
+                    output.AppendLine(Json(new
+                    {
+                        ok = tentadoOk,
+                        salvo,
+                        salvo_registrado = salvoOk,
+                        erro_salvo = erroSalvo,
+                        // o que está REALMENTE gravado no disco agora (prova que a preferência
+                        // sobrevive ao próximo início; comparação por valor, não por texto)
+                        salvo_no_disco = SettingsService.ReadFromDisk()?.Hotkey,
+                        disco_confere = SettingsService.ReadFromDisk()?.Hotkey == salvo,
+                        tentado = combo,
+                        tentado_registrado = tentadoOk,
+                        erro_tentado = erroTentado,
+                        ainda_ativo = svc.CurrentCombo
+                    }, true));
+                }
+                DestroyWindow(hwnd);
+                break;
+            }
+
             case "--check-tools":
             {
-                // No CI os scripts das ferramentas não existem (ficam na máquina do analista, fora do
-                // repositório). --skip-scripts valida só a estrutura do catálogo: gatilhos, duplicidade,
-                // base local e campos de credencial.
+                // --skip-scripts valida só a estrutura do catálogo (gatilhos, duplicidade, base local,
+                // campos de credencial) sem exigir o arquivo do script — útil em build que não copiou
+                // tools/ ainda. A regra de LOCAL do script vale sempre (ver docs/REGRAS-DE-FERRAMENTA.md R9).
                 var skipScripts = args.Contains("--skip-scripts");
                 var problems = new List<object>();
                 foreach (var tool in catalog.Tools)
@@ -81,16 +128,39 @@ public static class Cli
                     }
                     else if (!skipScripts && !tool.ScriptExists)
                         problems.Add(new { id = tool.Id, problema = "script não encontrado: " + tool.ExpandedScript });
+                    // A regra R9 (script ao lado do manifesto, sem caminho, nunca no Espanso) é
+                    // aplicada no carregamento do catálogo: quem viola nem entra como ferramenta
+                    // válida — aparece acima como "manifesto: …".
 
                     if (tool.Credentials is not null && tool.Credentials.Fields.Count == 0)
                         problems.Add(new { id = tool.Id, problema = "credenciais declaradas sem campos" });
+
+                    // R12: a descrição é a frase curta da ferramenta. Metadado técnico (contagem, data,
+                    // "agora:", separadores) pertence ao rodapé/estado, não à descrição — foi o que
+                    // duplicou texto na HUD e virou ruído nos scripts antigos.
+                    var descProblema = DescriptionProblem(tool.Description);
+                    if (descProblema is not null)
+                        problems.Add(new { id = tool.Id, problema = "descrição: " + descProblema });
+
+                    // Ícone por arquivo (R10): se o manifesto aponta um .ico/.png, o arquivo tem de existir
+                    // ao lado dele. Sem isso a ferramenta cai no glifo genérico — funciona, mas não é o
+                    // ícone que o analista escolheu.
+                    if (tool.IconIsFile && !tool.IconFileExists)
+                        problems.Add(new { id = tool.Id, problema = "ícone não encontrado: " + tool.ExpandedIconFile });
                 }
+
+                // Chaves ${CFG:...} que o catálogo pediu e a máquina não tem. NÃO é erro de catálogo
+                // (o repositório é público e não traz endereço nenhum) — é aviso de instalação.
+                var avisos = LocalConfig.Faltando
+                    .Select(k => $"configuração local ausente: {k} (em {LocalConfig.FilePath})")
+                    .ToList();
 
                 output.AppendLine(Json(new
                 {
                     ok = problems.Count == 0,
                     ferramentas = catalog.Tools.Count,
-                    problemas = problems
+                    problemas = problems,
+                    avisos
                 }, true));
 
                 Write(output.ToString());
@@ -377,6 +447,26 @@ public static class Cli
             File.WriteAllText(Path.Combine(AppPaths.DataDir, "cli-last.json"), text);
         }
         catch { }
+    }
+
+    /// <summary>
+    /// Regra R12 (docs/REGRAS-DE-FERRAMENTA.md): descrição = frase curta do que a ferramenta faz.
+    /// Sem contagem, data, "agora:", separadores de metadado ou quebra de linha.
+    /// </summary>
+    private static string? DescriptionProblem(string desc)
+    {
+        if (string.IsNullOrWhiteSpace(desc)) return "vazia (descreva o que a ferramenta faz em uma frase)";
+        if (desc.Length > 140) return $"longa demais ({desc.Length} caracteres; máximo 140)";
+        if (desc.Contains('\n') || desc.Contains('\r')) return "com quebra de linha";
+        if (desc.Contains('•') || desc.Contains('·') || desc.Contains(" | "))
+            return "com separador de metadado (•, ·, |) — deixe só a frase";
+        if (System.Text.RegularExpressions.Regex.IsMatch(desc, @"(?i)\b(agora|fonte|base de|gerado em|atualizado em)\s*:"))
+            return "com rótulo de metadado (\"agora:\", \"fonte:\"…)";
+        if (System.Text.RegularExpressions.Regex.IsMatch(desc, @"\d{4}-\d{2}-\d{2}"))
+            return "com data — data/base é estado, não descrição";
+        if (System.Text.RegularExpressions.Regex.IsMatch(desc, @"(?i)\d+\s+(cidades|com\s+nm|ferramentas?|itens?|registros?)"))
+            return "com contagem de itens — isso é estado, não descrição";
+        return null;
     }
 
     private static string Json(object value, bool writeIndented = false) =>
