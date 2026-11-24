@@ -1,67 +1,68 @@
-# Limpeza de histórico — deixar o repositório público
+# Limpeza de histórico — feito em 24/11/2026
 
-O código, os manifestos e os dados **já estão limpos** no commit atual. O que ainda carrega
-identificador de infraestrutura é o **histórico**: o endereço do serviço entrou no primeiro commit.
+O histórico foi reescrito com `git filter-repo` e republicado. Este documento registra **como** foi
+feito e o que observar se algum dia for preciso repetir.
 
-Enquanto o repositório for **privado**, nada precisa ser feito. Para torná-lo **público**, o histórico
-tem de ser reescrito — senão qualquer pessoa lê `git log -p` e vê o que tiramos do código.
+Resultado desta execução: 13 commits, `main` + tag `v2.1.0`, e um clone novo do GitHub não contém
+nenhum dos identificadores antigos (working tree **e** histórico).
 
-## Pré-requisitos
+## Por que foi necessário
 
-```
-pip install --user git-filter-repo
-```
+O código, os manifestos e os dados já estavam limpos no commit corrente, mas o endereço do serviço
+entrou no **primeiro** commit. Enquanto o repositório é privado isso é irrelevante; para torná-lo
+público, o histórico também precisa estar limpo — senão `git log -p` entrega o que tiramos do código.
 
-## 1. Substituições
-
-Arquivo `build/replacements.txt` (cada linha: `antigo==>novo`):
-
-```
-10.0.0.1==>10.0.0.1
-10.0.0.1==>10.0.0.1
-Inventário==>Inventário
-cofre.md==>cofre.md
-OPERADORA-A==>OPERADORA-A
-OPERADORA-B==>OPERADORA-B
-GESTOR-A==>GESTOR-A
-OLT-A==>OLT-A
-```
-
-## 2. Backup e reescrita
+## Procedimento (repetível)
 
 ```bash
-# backup completo antes (o filter-repo apaga o origin)
-git clone --mirror . ../analista-hub-backup.git
+# 0. backup completo (o filter-repo apaga o origin e não tem volta sem backup)
+git clone --mirror . ../analista-hub-backup-$(date +%Y%m%d).git
 
-# reescreve (precisa rodar na raiz do repo, com o clone limpo)
-python -m git_filter_repo --replace-text build/replacements.txt --force
+# 1. ferramenta
+python -m pip install git-filter-repo
 
-# confere que não sobrou nada
-git log --all -p | grep -c "201\.20\.85\|10\.168\.176"
-# esperado: 0
-```
+# 2. arquivo de substituições FORA do repositório, no formato:
+#      valor_antigo==>valor_novo
+#    uma linha por par. Mantenha em %TEMP%: se estiver dentro do repositório, o próprio
+#    filter-repo reescreve o arquivo e ele vira um no-op (foi o que aconteceu na primeira tentativa).
+$env:TEMP\substituicoes.txt
 
-## 3. Publicar
+# 3. reescrita
+python -m git_filter_repo --replace-text "$env:TEMP\substituicoes.txt" --force
 
-```bash
-git remote add origin https://github.com/<usuario>/analista-hub.git
-git push --force --all origin
+# 4. conferir ANTES de publicar
+git log --all --oneline -S "<valor_antigo>"     # deve sair vazio
+git log --all -p | grep -c "<valor_antigo>"     # deve dar 0
+
+# 5. publicar TUDO (branch + tags — só a branch não basta)
+git remote add origin https://github.com/<usuario>/<repo>.git
+git push --force origin main
 git push --force --tags origin
 ```
 
-## 4. Depois
+## Duas armadilhas que custaram tempo
 
-- Todo clone antigo fica inválido (SHAs mudam). Quem tiver cópia precisa clonar de novo.
-- Se o repositório já tiver sido público em algum momento, trate os endereços como conhecidos:
-  o histórico de terceiros (forks, cache do GitHub, `git clone` de alguém) não é apagável por nós.
-- O `config.local.json` e o `sse-rede.local.json` **nunca** estiveram no repositório — a auditoria
-  confirmou isso em todos os commits.
+1. **Só `main` não basta**: a tag `v0.2.0` continuou apontando para o commit antigo no remoto, e
+   `git clone` traz tags por padrão — ou seja, o histórico sujo voltava por ela. Aqui a tag antiga foi
+   **apagada** (apontava para uma versão anterior à limpeza) e criada `v2.1.0` no commit limpo.
+2. **O arquivo de substituições dentro do repositório** é reescrito junto e deixa de funcionar em uma
+   segunda execução. Sempre em `%TEMP%`.
 
-## Estado da auditoria (working tree)
+## Verificação final (o que realmente prova)
 
-| Verificação | Resultado |
-|---|---|
-| JWT / chave / `.env` / cofre no histórico | nenhum |
-| Endereço interno / nome de rede / nome de empresa em arquivo versionado | nenhum |
-| `config.local.json`, `sse-rede.local.json`, `*token*.json` no índice | nenhum (`.gitignore`) |
-| Arquivos versionados que ainda casam com o padrão de IP privado | só exemplos genéricos (`10.0.0.1`) |
+Não confie em `git log` local: clone do remoto e varra o clone.
+
+```bash
+git clone https://github.com/<usuario>/<repo>.git verif
+cd verif
+git rev-list --all --count                       # confere a contagem
+git for-each-ref --format='%(refname:short)'      # confere que só há main e a tag nova
+git log --all -p | grep -c "<valor_antigo>"       # deve dar 0
+```
+
+## O que não é apagável
+
+- Forks, caches do GitHub e clones de terceiros feitos **enquanto** o repositório tinha o histórico
+  antigo. A reescrita limpa o nosso lado, não o dos outros.
+- Se o repositório já foi público alguma vez, trate os valores como conhecidos: rotacione as
+  credenciais em vez de confiar na limpeza.
