@@ -10,6 +10,9 @@ dist/
 *.log
 cli-last.json
 
+# backups/artefatos locais (não versionar)
+*.zip
+
 # sistema
 Thumbs.db
 desktop.ini
