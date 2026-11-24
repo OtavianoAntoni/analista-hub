@@ -125,12 +125,12 @@ consulta que já esteja aberto.
 
 ### 3.5 Texto copiado (contrato estável)
 
-Cidade com redes:
+Cidade com redes (valores de exemplo — a rede real fica no `sse-rede.local.json` da máquina):
 ```
 TAGUATINGA (DF) — Sigla Anatel: TAGA
-NM: NCE GESTOR-A | OLT: REDE-INTERNA | VPN: VPN OPERADORA-A / CLICK
-NM: AMS OPERADORA-A | OLT: REDE-INTERNA | VPN: VPN OPERADORA-A
-NM: NETNUMEN OPERADORA-A | OLT: ZTE | VPN: VPN OPERADORA-A
+NM: NM-EXEMPLO-1 | OLT: OLT-01 | VPN: VPN-EXEMPLO-1
+NM: NM-EXEMPLO-2 | OLT: OLT-02 | VPN: VPN-EXEMPLO-2
+NM: NM-EXEMPLO-3 | OLT: OLT-03 | VPN: VPN-EXEMPLO-3
 ```
 
 Cidade só com cadastro:
