@@ -54,9 +54,6 @@ Get-ChildItem $outDir -Directory |
 # símbolos de depuração não vão para a máquina do usuário
 Get-ChildItem $outDir -Filter *.pdb -File | Remove-Item -Force -ErrorAction SilentlyContinue
 
-$totalMb = [math]::Round(((Get-ChildItem $outDir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
-$files = (Get-ChildItem $outDir -Recurse -File | Measure-Object).Count
-
 # lançadores de duplo-clique (copiados do repositório, CRLF preservado)
 $launcherDir = Join-Path $root 'launcher'
 if (Test-Path $launcherDir)
@@ -92,6 +89,10 @@ if (Test-Path $toolsDir)
     }
 }
 
+# Contagem só depois de tudo que entra no pacote (lançador, PATCHLOG, limpeza): o número impresso
+# tem de bater com o que o usuário vê ao extrair.
+$totalMb = [math]::Round(((Get-ChildItem $outDir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
+$files = (Get-ChildItem $outDir -Recurse -File | Measure-Object).Count
 Write-Host "== pronto: $files arquivos, $totalMb MB em $outDir"
 
 # Gate permanente: nenhuma publicação passa com ferramenta fora das regras
