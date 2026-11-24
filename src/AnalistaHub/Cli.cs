@@ -26,7 +26,7 @@ public static class Cli
     public static bool IsCliInvocation(string[] args) =>
         args.Length > 0 && args[0] is "--list-tools" or "--test" or "--probe" or "--version" or "--help"
             or "--set-cred" or "--clear-cred" or "--set-trigger" or "--validate-cred" or "--check-tools"
-            or "--try-hotkey"
+            or "--try-hotkey" or "--whatsnew"
             or "--check-update" or "--download-update" or "--apply-update";
 
     public static int Run(string[] args, ToolCatalog catalog)
@@ -57,7 +57,8 @@ public static class Cli
                 output.AppendLine("  AnalistaHub.exe --clear-cred <id>   apaga as credenciais guardadas da ferramenta");
                 output.AppendLine("  AnalistaHub.exe --validate-cred <id> confirma as credenciais no serviço");
                 output.AppendLine("  AnalistaHub.exe --check-tools       valida o catálogo (gatilho, script, campos)");
-                output.AppendLine("  AnalistaHub.exe --try-hotkey [combo] testa se o Windows libera o atalho (padrão: o salvo)");
+                output.AppendLine("  AnalistaHub.exe --try-hotkey [combo] testa se o Windows libera o atalho global");
+                output.AppendLine("  AnalistaHub.exe --whatsnew         mostra o que mudou na versão instalada (PATCHLOG)");
                 output.AppendLine("  AnalistaHub.exe --check-update      consulta o canal de atualização e imprime o resultado");
                 output.AppendLine("  AnalistaHub.exe --download-update   baixa e prepara a atualização (não aplica)");
                 output.AppendLine("  AnalistaHub.exe --apply-update      aplica a atualização preparada e reabre o app");
@@ -100,6 +101,19 @@ public static class Cli
                 }
                 DestroyWindow(hwnd);
                 break;
+            }
+
+            case "--whatsnew":
+            {
+                // Mostra o que mudou na versão instalada (lido do PATCHLOG.md ao lado do exe).
+                var texto = PatchNotes.SectionFor(UpdateService.CurrentVersion);
+                if (texto is null)
+                    output.AppendLine(Json(new { ok = false, versao = UpdateService.CurrentVersion,
+                        motivo = "PATCHLOG.md não encontrado ao lado do programa" }, true));
+                else
+                    output.AppendLine(Json(new { ok = true, versao = UpdateService.CurrentVersion, notas = texto }, true));
+                Write(output.ToString());
+                return 0;
             }
 
             case "--check-tools":

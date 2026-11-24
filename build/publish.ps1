@@ -67,6 +67,14 @@ if (Test-Path $launcherDir)
     }
 }
 
+# Patch log vai dentro do pacote: quem extrai o zip lê o que mudou sem abrir o repositório.
+$patchSrc = Join-Path $root 'PATCHLOG.md'
+if (Test-Path $patchSrc)
+{
+    Copy-Item $patchSrc (Join-Path $outDir 'PATCHLOG.md') -Force
+    Write-Host "== PATCHLOG.md incluído no pacote"
+}
+
 # Higiene do pacote: artefatos de runtime que o app cria em tools/ (cache de token = JWT de sessão,
 # cache de OUI, logs, backups) NUNCA podem viajar no zip do release. Se o build copiou algum da
 # pasta de origem, sai aqui — antes da contagem.

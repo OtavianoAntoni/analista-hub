@@ -73,9 +73,41 @@ $size = (Get-Item $zipPath).Length
 Set-Content -Path "$zipPath.sha256" -Value "$hash  $AssetName" -Encoding ASCII
 Write-Host "== zip: $([math]::Round($size/1MB,1)) MB · sha256 $hash"
 
-if (-not $Notes) {
-    $Notes = "Atualização do Analista Hub para a versão $version." + [Environment]::NewLine +
-             "Instale por Configurações → Atualizações → Procurar por atualização agora."
+# Notas da release: o patch log é a fonte. Sem -Notes, extrai do PATCHLOG.md a seção da versão,
+# para o usuário ler o que mudou na página do release e no aviso de atualização do app.
+if ([string]::IsNullOrWhiteSpace($Notes))
+{
+    $patchFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'PATCHLOG.md'
+    if (Test-Path $patchFile)
+    {
+        $dentro = $false
+        $buf = @()
+        foreach ($linha in (Get-Content $patchFile -Encoding UTF8))
+        {
+            if ($linha -match '^##\s+(\S+)')
+            {
+                if ($dentro) { break }
+                $cab = $Matches[1]
+                if ($cab -eq $version -or $version.StartsWith($cab + '.') -or $cab.StartsWith($version + '.'))
+                {
+                    $dentro = $true
+                    continue
+                }
+            }
+            elseif ($dentro) { $buf += $linha }
+        }
+        if ($buf.Count -gt 0) { $Notes = ($buf -join "`n").Trim() }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Notes))
+    {
+        $Notes = "Atualização do Analista Hub para a versão $version."
+        Write-Host "== notas: seção $version ausente no PATCHLOG.md, usando texto padrão"
+    }
+    else
+    {
+        Write-Host "== notas: seção $version do PATCHLOG.md ($($Notes.Length) caracteres)"
+    }
 }
 # UTF-8 SEM BOM: Set-Content -Encoding UTF8 do PowerShell 5.1 grava BOM, e o manifesto é lido
 # pelo app (e por qualquer outro consumidor) como JSON puro.

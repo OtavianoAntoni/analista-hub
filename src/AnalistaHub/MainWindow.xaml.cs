@@ -1279,6 +1279,24 @@ public sealed partial class MainWindow : Window
         var updatePanel = new StackPanel { Spacing = 8 };
         var updateVersion = Muted($"Versão instalada: v{UpdateService.CurrentVersion}");
         var updateStatus = Muted("Ainda não verificado nesta sessão.");
+
+        // "o que mudou": as notas vêm do canal de atualização e o texto completo vai no pacote
+        var updateNotesText = new TextBlock
+        {
+            FontSize = 11.5,
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = 17
+        };
+        var updateNotes = new ScrollViewer
+        {
+            Content = updateNotesText,
+            MaxHeight = 190,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Visibility = Visibility.Collapsed,
+            Padding = new Thickness(12, 8, 12, 8),
+            CornerRadius = new CornerRadius(6),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(22, 255, 255, 255))
+        };
         var updateBar = new ProgressBar
         {
             Minimum = 0, Maximum = 100, Value = 0, Width = 360,
@@ -1293,9 +1311,31 @@ public sealed partial class MainWindow : Window
         };
         var installNow = new Button { Content = "Baixar e instalar", Visibility = Visibility.Collapsed };
         var restartNow = new Button { Content = "Reiniciar e atualizar", Visibility = Visibility.Collapsed };
+        var whatsNew = new Button { Content = "O que mudou nesta versão" };
         updateRow.Children.Add(checkNow);
         updateRow.Children.Add(installNow);
         updateRow.Children.Add(restartNow);
+        updateRow.Children.Add(whatsNew);
+
+        whatsNew.Click += async (_, _) =>
+        {
+            var texto = PatchNotes.SectionFor(UpdateService.CurrentVersion)
+                        ?? "Não encontrei o PATCHLOG.md ao lado do programa.";
+            var corpo = new ScrollViewer
+            {
+                Content = new TextBlock { Text = texto, TextWrapping = TextWrapping.Wrap, FontSize = 12.5 },
+                MaxHeight = 420,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+            };
+            var dialog = new ContentDialog
+            {
+                Title = $"O que mudou na v{UpdateService.CurrentVersion}",
+                Content = corpo,
+                CloseButtonText = "Fechar",
+                XamlRoot = (Content as FrameworkElement)?.XamlRoot
+            };
+            try { await dialog.ShowAsync(); } catch (Exception ex) { AppPaths.Log("whatsNew: " + ex.Message); }
+        };
 
         void RefreshUpdateState()
         {
@@ -1322,6 +1362,21 @@ public sealed partial class MainWindow : Window
                 var when = last.CheckedAtUtc.ToLocalTime().ToString("dd/MM 'às' HH:mm");
                 updateStatus.Text = UpdateService.Describe(last) + $" (verificado em {when})";
                 installNow.Visibility = last.HasUpdate ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            // "o que muda": vem do notes do canal (que o release preenche com a seção do PATCHLOG)
+            var novidades = last is not null && last.HasUpdate && !string.IsNullOrWhiteSpace(last.Notes)
+                ? last.Notes.Trim()
+                : null;
+
+            if (novidades is not null)
+            {
+                updateNotesText.Text = $"O que muda na v{last!.LatestVersion}\n\n{novidades}";
+                updateNotes.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                updateNotes.Visibility = Visibility.Collapsed;
             }
         }
 
@@ -1435,6 +1490,7 @@ public sealed partial class MainWindow : Window
         updatePanel.Children.Add(updateRow);
         updatePanel.Children.Add(updateBar);
         updatePanel.Children.Add(updateStatus);
+        updatePanel.Children.Add(updateNotes);
         updatePanel.Children.Add(autoCheckToggle);
         updatePanel.Children.Add(Muted("Canal: " + UpdateService.FeedUrl));
         updatePanel.Children.Add(Muted("A troca de versão fecha o app, substitui a pasta do programa e abre de novo. Se a versão nova não abrir, a anterior volta sozinha."));
