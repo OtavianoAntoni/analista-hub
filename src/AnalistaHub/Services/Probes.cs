@@ -44,7 +44,7 @@ public static class Probes
 }
 
 public sealed record HistoryEntry(DateTime When, string ToolId, string ToolName, string Input, bool Ok,
-    double Seconds, string Detail);
+    double Seconds, string Detail, string Origem = "");
 
 public static class HistoryStore
 {
@@ -64,7 +64,9 @@ public static class HistoryStore
                 input = e.Input,
                 ok = e.Ok,
                 sec = Math.Round(e.Seconds, 2),
-                detail = Truncate(e.Detail, 300)
+                detail = Truncate(e.Detail, 300),
+                // CFG-003: auditoria do caminho usado ("atalho/consult", "atalho/ask", "hud", "painel")
+                origem = e.Origem
             });
             lock (Lock) File.AppendAllText(AppPaths.HistoryFile, json + Environment.NewLine);
         }

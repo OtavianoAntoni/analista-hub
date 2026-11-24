@@ -12,7 +12,20 @@ public sealed record RunResult(
     string RawStderr,
     int ExitCode,
     TimeSpan Elapsed,
-    bool TimedOut);
+    bool TimedOut)
+{
+    /// <summary>
+    /// Legenda do aviso de sucesso. "0" é resposta — não erro — e precisa de contexto: usa a
+    /// explicação que o script devolveu ("10.0.0.1 sem SN") ou o rótulo declarado no manifesto.
+    /// Sem isso o aviso mostrava um "0" solto, sem dizer o que aquilo significava (NET-004).
+    /// </summary>
+    public string SuccessSubtitle(ToolManifest tool, string fallback)
+    {
+        if (Value.Trim() != "0") return fallback;
+        if (!string.IsNullOrWhiteSpace(Detail)) return Detail.Trim();
+        return string.IsNullOrWhiteSpace(tool.Output.SuccessLabel) ? fallback : tool.Output.SuccessLabel;
+    }
+}
 
 /// <summary>
 /// Executa o script de uma ferramenta.
@@ -28,8 +41,40 @@ public static class ToolRunner
         CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
+
+        // SQ-004: mensagem completa e acionável. Antes, script vazio devolvia
+        // "Script da ferramenta não encontrado:" + caminho vazio — texto truncado que não dizia
+        // nem qual ferramenta era, nem o que fazer.
+        if (string.IsNullOrWhiteSpace(tool.Script))
+            return new RunResult(false, "",
+                $"A ferramenta «{tool.Name}» ({tool.Id}) não declara script no manifesto.\n" +
+                (tool.IsDataset
+                    ? "Ela consulta uma base local: abra pelo painel da ferramenta, não pela execução.\n"
+                    : "Declare \"script\" com o nome do arquivo que mora em tools/.\n") +
+                $"Manifesto: {tool.SourcePath}",
+                "", "", -1, sw.Elapsed, false);
+
         if (!tool.ScriptExists)
-            return new RunResult(false, "", $"Script da ferramenta não encontrado:\n{tool.ExpandedScript}", "", "", -1, sw.Elapsed, false);
+            return new RunResult(false, "",
+                $"Script da ferramenta não encontrado:\n{tool.ExpandedScript}\n" +
+                $"Manifesto: {tool.SourcePath}\n" +
+                "Rode AnalistaHub.exe --check-tools e confira o nome do arquivo em tools/.",
+                "", "", -1, sw.Elapsed, false);
+
+        // Configuração da máquina incompleta: recusar com a CAUSA é melhor do que rodar e devolver
+        // "erro de comunicação" (NET-003). Acontece quando o config.local.json foi apagado ou
+        // veio vazio de outra máquina.
+        if (tool.Network is { } rede && string.IsNullOrWhiteSpace(rede.Host))
+            return new RunResult(false, "",
+                $"Endereço do serviço não configurado ({tool.Id}.host).\n" +
+                $"Abra Configurações → Configuração local e preencha:\n{LocalConfig.FilePath}",
+                "", "", -1, sw.Elapsed, false);
+
+        // NET-004: marca quantas linhas o log do script já tinha. A mensagem de erro só pode citar o
+        // que ESTA execução escreveu — antes ela lia o fim de um log acumulado e podia mostrar a
+        // última linha de uma consulta anterior (apareceu "IP 255.255.255.252 sem SN" para um IP que
+        // o analista nunca digitou).
+        var logLinesBefore = CountLogLines(tool.ExpandedLogFile);
 
         var psi = BuildStartInfo(tool, inputs);
 
@@ -74,7 +119,9 @@ public static class ToolRunner
                 return new RunResult(
                     Ok: json.Ok,
                     Value: json.Value,
-                    Detail: json.Ok ? "" : json.Detail,
+                    // NET-004: o detail de um resultado OK explica o valor ("<IP> sem SN"); sem ele o
+                    // "0" aparecia sozinho no aviso, sem dizer o que significava.
+                    Detail: json.Detail,
                     RawStdout: raw, RawStderr: err,
                     ExitCode: process.ExitCode, Elapsed: sw.Elapsed, TimedOut: false);
             }
@@ -93,7 +140,7 @@ public static class ToolRunner
                 return new RunResult(true, raw.Trim(), "", raw, err, process.ExitCode, sw.Elapsed, false);
             }
 
-            var detail = DescribeLegacyFailure(tool, raw, err, process.ExitCode);
+            var detail = DescribeLegacyFailure(tool, raw, err, process.ExitCode, logLinesBefore);
             if (detail.StartsWith("Usuário ou senha recusados", StringComparison.Ordinal))
                 CredentialValidator.MarkRefused(tool.Id, detail);
             return new RunResult(false, "", detail, raw, err, process.ExitCode, sw.Elapsed, false);
@@ -193,6 +240,14 @@ public static class ToolRunner
             }
         }
 
+        // Endereço do serviço resolvido no config.local.json vai por ambiente: o script não carrega
+        // IP nem hostname (o repositório é público). Vazio = a ferramenta avisa o que falta.
+        if (tool.Network is { } rede)
+        {
+            psi.Environment["ANALISTAHUB_HOST"] = rede.Host ?? "";
+            psi.Environment["ANALISTAHUB_PORT"] = rede.Port > 0 ? rede.Port.ToString() : "";
+        }
+
         return psi;
     }
 
@@ -246,11 +301,24 @@ public static class ToolRunner
         catch { return false; }
     }
 
+    /// <summary>Quantas linhas o log do script tem agora (-1 quando o arquivo não existe).</summary>
+    private static int CountLogLines(string log)
+    {
+        if (string.IsNullOrWhiteSpace(log) || !File.Exists(log)) return -1;
+        try { return File.ReadLines(log).Count(); }
+        catch { return -1; }
+    }
+
     /// <summary>
     /// O script antigo não devolve a mensagem no stdout: ela vai para o log dele
     /// (%TEMP%\mkt_serial.log) e/ou stderr. Lê o fim do log para não perder o motivo.
+    ///
+    /// NET-004: só as linhas escritas por ESTA execução entram no recorte (<paramref name="logLinesBefore"/>
+    /// é a contagem de linhas antes do processo começar). Sem isso a mensagem citava a última linha de
+    /// uma consulta anterior — texto de outro IP, sem relação com o que o analista pediu.
     /// </summary>
-    private static string DescribeLegacyFailure(ToolManifest tool, string raw, string err, int exitCode)
+    private static string DescribeLegacyFailure(ToolManifest tool, string raw, string err, int exitCode,
+        int logLinesBefore)
     {
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(raw)) parts.Add(raw.Trim());
@@ -261,7 +329,9 @@ public static class ToolRunner
         {
             try
             {
-                var tail = File.ReadLines(log).TakeLast(8).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
+                var linhas = File.ReadLines(log);
+                if (logLinesBefore > 0) linhas = linhas.Skip(logLinesBefore);
+                var tail = linhas.Where(l => !string.IsNullOrWhiteSpace(l)).TakeLast(8).ToList();
 
                 // login recusado é o caso mais comum e o mais confuso: o log traz só JSON
                 var authLine = tail.LastOrDefault(IsAuthFailure);
@@ -298,7 +368,9 @@ public static class ToolRunner
         string[] tokens =
         {
             "falhou", "erro", "inesperada", "recusad", "negad",
-            "indisponivel", "invalido", "invalida", "nao encontrada", "expirado", "sem sn"
+            // NET-004: "sem sn" saiu daqui — "não achei o SN" é RESPOSTA (valor 0), não falha.
+            // Mantê-lo fazia uma linha antiga do log virar mensagem de erro de uma consulta nova.
+            "indisponivel", "invalido", "invalida", "nao encontrada", "expirado"
         };
         return tokens.Any(t => line.Contains(t, StringComparison.OrdinalIgnoreCase));
     }

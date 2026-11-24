@@ -30,9 +30,9 @@ Nome do produto: **Analista Hub** (decisão de projeto). Executável: `AnalistaH
 
 | Ferramenta | Entrada | Saída | Depende de |
 |---|---|---|---|
-| SN de RB pelo IP (gatilho `:mkt`) | IPv4 (ou CIDR `/32`); vazio = clipboard | SN + `1`, ou `0` se o IP não está no inventário | Inventário "Inventário" (HTTP :3113) + credenciais do cofre (seção 5) |
-| Fabricante pelo MAC (gatilho `:macv`/`:macc`/`:mact`) | MAC (qualquer separador; 6 primeiros hex); vazio = clipboard | Nome do fabricante | `api.macvendors.com` (HTTPS) |
-| Consulta SSE (gatilho `:sse`) | cidade (nome, sigla Anatel ou UF) | Sigla Anatel + estado + NM/OLT/VPN quando houver; botão **NMs** oculta as informações de acesso; painel próprio, `Enter` copia | base local `data/sse-cidades.json` — planilhas do SSE + cadastro de municípios da ANATEL (sem rede, sem credencial) |
+| SN de RB pelo IP | IPv4 (ou CIDR `/32`); vazio = clipboard | SN + `1`, ou `0` se o IP não está no inventário | Inventário "Inventário" (HTTP :3113) + credenciais do cofre (seção 5) |
+| Fabricante pelo MAC | MAC (qualquer separador; 6 primeiros hex); vazio = clipboard | Nome do fabricante | `api.macvendors.com` (HTTPS) |
+| Consulta SSE | cidade (nome, sigla Anatel ou UF) | Sigla Anatel + estado + NM/OLT/VPN quando houver; botão **NMs** oculta as informações de acesso; painel próprio, `Enter` copia | base local `data/sse-cidades.json` — planilhas do SSE + cadastro de municípios da ANATEL (sem rede, sem credencial) |
 
 Campos e comportamento vêm dos scripts já existentes (evidência: `mkt_serial.ps1`,
 `mac_vendor.ps1`). Nada neles é reescrito nesta entrega: o HUB os **chama** e apresenta o
@@ -56,9 +56,9 @@ resultado. Contrato de chamada na §7.
 - Esc fecha sem executar nada.
 
 ### 3.3 Busca e seleção
-- Filtro incremental por: nome da ferramenta, gatilho (aceita `:mkt`, `mkt`, `:mk`) e palavras
-  da descrição. Insensível a maiúsculas e acentos.
-- Lista com ícone, nome, descrição curta e gatilho à direita.
+- Filtro incremental por: nome da ferramenta e palavras da descrição/categoria. Insensível a
+  maiúsculas e acentos. (O código curto `:mkt` saiu no 2.2.1 — ver `docs/REGRAS-DE-FERRAMENTA.md` R1.)
+- Lista com ícone, nome e descrição curta.
 - `↑`/`↓` movem a seleção; `Enter` executa; `Tab` completa o nome na busca.
 - Enter com a busca vazia executa a primeira ferramenta da lista (nunca uma ferramenta que
   dependa de entrada sem mostrar os campos primeiro).
@@ -110,7 +110,7 @@ resultado. Contrato de chamada na §7.
 
 Layout estilo PowerToys: navegação à esquerda, conteúdo à direita.
 
-- **Início**: cartões das ferramentas com nome, o que faz, gatilho e **uma única bolinha de
+- **Início**: cartões das ferramentas com nome, o que faz e **uma única bolinha de
   status** que reflete comunicação **e** autenticação (ver 5.2). Botões **Abrir** (HUD já filtrada)
   e **Testar** (executa com o valor atual do clipboard).
 - **Bandeja**: clique esquerdo abre o HUD; clique direito abre um menu com o **nome de cada
@@ -118,10 +118,11 @@ Layout estilo PowerToys: navegação à esquerda, conteúdo à direita.
   O menu é montado na hora, então ferramenta nova aparece sem reiniciar.
 - **Página da ferramenta** — quatro blocos, espelhando exatamente os quatro itens do `IDEA.md`:
   1. **Para que serve** — descrição em linguagem de operação.
-  2. **Como executar** — gatilho, atalho global, exemplo de uso, duração típica.
+  2. **Como executar** — atalho global, exemplo de uso, duração típica.
   3. **Configurações e credenciais** — três partes na mesma aba:
-     - **Gatilho da ferramenta**, editável (ex.: `:mkt` → `:sn`), salvo ao sair do campo ou pelo
-       botão "Salvar"; passa a valer na busca do HUD e nos cartões.
+     - **Comportamento do atalho** (CFG-003, por ferramenta): **Aguardar input** (padrão — abre a
+       ferramenta com o campo em foco) ou **Consultar direto** (usa a área de transferência no
+       momento do atalho). Valor vazio/inválido em *Consultar direto* cai para *Aguardar input*.
      - **Entrada da consulta** (o que o script recebe), em modo leitura.
      - **Credenciais digitáveis** (usuário/senha), gravadas **automaticamente** ao sair do campo e
        também por um botão "Salvar credenciais". O usuário **não** informa caminho de arquivo.
@@ -307,6 +308,28 @@ O corpo da requisição contém a senha: nada é logado, e a resposta é descart
 o campo de sucesso/mensagem. Falha de autenticação detectada numa execução real também atualiza o
 estado — a bolinha fica amarela sem precisar de nova validação.
 
+### 6.7 Ping do destino (NET-001)
+
+Campo de IP que declara `"ping": true` no manifesto (hoje só o `:mkt`) pinga o destino enquanto o
+analista digita. Regra permanente: **R14** em `docs/REGRAS-DE-FERRAMENTA.md`; comportamento detalhado
+em `docs/SUBFERRAMENTA-PING.md`.
+
+| Etapa | Comportamento |
+|---|---|
+| Gatilho | o texto vira um IPv4 completo e válido (CIDR é aceito e descartado) |
+| Espera | `PingDebounceMs` (padrão 400 ms) depois da última tecla |
+| Edição | qualquer alteração — em qualquer octeto — cancela o eco em curso e reagenda |
+| Pacote | 1 eco ICMP, timeout `PingTimeoutMs` (padrão 1000 ms) |
+| Exibição | 1 linha ao lado do campo com **opacidade 75%**: `1 ms` / `sem resposta` / `destino inalcançável` |
+| Resultado | o aviso da ferramenta mostra os 2 últimos retornos: `ping · 3 ms · 4 ms` |
+| Trava | 100 disparos por invocação; ao estourar, para e diz no rodapé como reiniciar |
+| Processo | nenhum: ICMP pela API do Windows, então cancelar não deixa `ping.exe` órfão |
+| IPv6 | fora do escopo desta versão — o campo mostra «IPv6 ainda fora do escopo do ping do HUB» |
+
+Preferências em Configurações → **Ping do destino** (espera e timeout). Diagnóstico:
+`--ping <ip> [--count N]` (ICMP real) e `--ping-sim [--debounce ms]` (debounce, cancelamento e trava,
+com emissor falso — não depende de rede).
+
 ---
 
 ## 7. Contrato com os scripts (para as próximas ferramentas)
@@ -325,14 +348,16 @@ detalhe é lido do arquivo de log declarado no manifesto (`mkt_serial.log`, `mac
 
 O contrato legado tem duas pegadinhas reais, ambas visíveis nos scripts atuais e tratadas pelo HUB:
 
-1. `mac_vendor.ps1` escreve a **mensagem de erro no stdout** e sai com código 0 no `-Mode type`.
-   O manifesto declara `stdoutErrorPatterns`; o que casa com um padrão é falha, não valor.
-2. Os dois scripts abrem o **próprio popup** quando falham (`legacyErrorPopup`). Enquanto não
-   migrarem para `-Mode hub`, a falha aparece duas vezes: no HUD e no popup do script.
+1. `mac_vendor.ps1` no modo legado escrevia a **mensagem de erro no stdout** e saía com código 0.
+   O manifesto declara `stdoutErrorPatterns` para reconhecer isso — histórico: desde o 2.2.1 os
+   dois scripts rodam em `-Mode hub` (JSON `{status,value,detail}`), sem popup próprio.
+2. `-Mode hub` é o contrato atual: `status: ok` = valor válido (`0` é resposta, não erro),
+   `status: error` = falha com o motivo em `detail`. `legacyErrorPopup` foi removido dos manifestos.
 
-Manifesto declara: id, nome, descrição, categoria, gatilho, ícone, script + interpretador,
+Manifesto declara: id, nome, descrição, categoria, ícone, script + interpretador,
 campos de entrada, modos de saída suportados, requisito de credencial (arquivo + seção), host/porta
 para teste de conexão, tempo limite, log de diagnóstico e os padrões de erro do contrato legado.
+**Não declara gatilho** (removido no 2.2.1).
 
 ---
 
@@ -502,7 +527,8 @@ As saídas: repositório público, ou repositório público só de releases alim
 - Instalador, assinatura de código, atualização automática (sessão separada).
 - Escrita/ações que alterem equipamentos ou sistemas (só consulta).
 - Sincronização de configurações entre pessoas da equipe (o `IDEA.md` prevê; fica para depois).
-- Substituir o Espanso: os gatilhos `:mkt`, `:macv` continuam funcionando como hoje.
+- Substituir o Espanso: os códigos curtos (`:mkt`, `:macv`) **deixaram de existir no 2.2.1** — a
+  invocação passou a ser pelo nome na busca ou pelo atalho da ferramenta.
 
 ---
 
@@ -512,7 +538,7 @@ As saídas: repositório público, ou repositório público só de releases alim
 se alguma ferramenta violar as regras de `docs/REGRAS-DE-FERRAMENTA.md`:
 
 - manifesto inválido ou script inexistente;
-- gatilho fora da regra (formato, tamanho) ou repetido;
+- `trigger` presente no manifesto (conceito removido no 2.2.1);
 - credenciais declaradas sem campos.
 
 Rodar a qualquer momento: `build\check-tools.ps1` ou `AnalistaHub.exe --check-tools`
@@ -547,7 +573,7 @@ ajuste.
 | Afirmação | Evidência |
 |---|---|
 | Campos e modos do SN por IP | `src/AnalistaHub/tools/mkt_serial.ps1` (veio de `%APPDATA%\espanso\scripts` em 24/11/2026) |
-| Gatilhos `:mkt`, `:macv`, `:macc`, `:mact` | histórico: `espanso\match\mkt_serial.yml`, `espanso\match\mac_vendor.yml` — o HUB não usa Espanso |
+| Códigos curtos `:mkt`, `:macv`, `:macc`, `:mact` | histórico: `espanso\match\mkt_serial.yml`, `espanso\match\mac_vendor.yml` — o HUB não usa Espanso e, desde o 2.2.1, não usa código curto |
 | Campos e cache do MAC vendor | `src/AnalistaHub/tools/mac_vendor.ps1` (veio de `%APPDATA%\espanso\scripts` em 24/11/2026) |
 | Cofre de credenciais, seção 5 | `mkt_serial.ps1` linhas 83 e 112-129; `Documents\Processos\Analyser\credenciais\cofre.md` |
 | Os quatro itens por ferramenta e o atalho central | `IDEA.md` §Experiência de uso, §Princípios, §Escopo |
@@ -567,7 +593,7 @@ Ambiente: Windows 10 corporativo, sem administrador. SDK .NET 8.0.428 instalado 
 | Pacote publicado executa | `dist\AnalistaHub\AnalistaHub.exe` | janela "Analista Hub" abre e permanece |
 | Catálogo carrega | `AnalistaHub.exe --list-tools` | 2 ferramentas, `estado: ok`, `script_existe: true` |
 | Serviço + cofre | `AnalistaHub.exe --probe mkt-serial` | `servico_responde: true`, `credenciais.completo: true` |
-| Consulta real (MikroTik) | `AnalistaHub.exe --test mkt-serial 10.0.0.1` | `ok: true`, valor `E3210E3C4EE71` |
+| Consulta real (MikroTik) | `AnalistaHub.exe --test mkt-serial 10.0.0.1` | `ok: true`, valor `E32…EE71` |
 | Consulta real (MAC) | `AnalistaHub.exe --test mac-vendor F4:8E:38` | `ok: true`, valor `Dell Inc.` |
 | MAC localmente administrado | `--test mac-vendor 02:11:22` | `ok: false` com explicação (não vira valor) |
 | MAC inválido | `--test mac-vendor zz` | `ok: false` com explicação |
@@ -576,18 +602,18 @@ Ambiente: Windows 10 corporativo, sem administrador. SDK .NET 8.0.428 instalado 
 | Captura recusa tecla pura | tecla sem modificador | mensagem "use Ctrl, Alt, Shift ou Win" e atalho anterior mantido |
 | Credenciais cifradas (item 3) | `--set-cred` (valor via STDIN) + `--probe` | `completo: true`; `credenciais.dat` gravado com DPAPI |
 | Senha errada no HUB | `--set-cred passwd` com valor inválido + `--test` | falha de login com mensagem "Usuário ou senha recusados pelo inventário" |
-| Senha correta no HUB | `--set-cred` com valor do cofre + `--test` | `ok: true`, valor `E3210E3C4EE71` |
-| Cofre antigo continua válido | script chamado direto, sem env | responde `E3210E3C4EE71` (Espanso não quebra) |
-| Gatilho configurável (item 4) | `--set-trigger mkt-serial :sn` + `--list-tools` | `gatilho: ":sn"`, persistido em `settings.json`, volta a `:mkt` |
+| Senha correta no HUB | `--set-cred` com valor do cofre + `--test` | `ok: true`, valor `E32…EE71` |
+| Cofre antigo continua válido | script chamado direto, sem env | responde `E32…EE71` (Espanso não quebra) |
+| Comportamento do atalho (CFG-003) | `ShortcutBehavior` = `consult` + `--tool-hotkey mkt-serial` | histórico com `origem: "atalho/consult"`; sem a preferência, abre os campos (`comportamento=ask`) |
 | Clique direito na bandeja (item 1) | `PostMessage(WM_TRAYICON, WM_RBUTTONUP)` | menu com 7 itens (2 ferramentas, Buscar, Configurações, Fechar); `tray: menu aberto (7 itens), escolhido=0` ao cancelar |
-| Gate de catálogo | manifesto com gatilho duplicado (`:MKT` vs `:mkt`) + `--check-tools` | `ok:false`, exit 1, motivo "o gatilho :mkt já é da ferramenta …"; volta a `ok:true` sem o manifesto |
+| Gate de catálogo | manifesto com `"trigger"` + `--check-tools` | `ok:false`, exit 1, motivo "manifesto ainda declara \"trigger\" …"; volta a `ok:true` sem o manifesto |
 | Validação de credencial (aceita) | `--validate-cred mkt-serial` | `estado: ok`, `mensagem: auth_success` |
 | Validação de credencial (recusada) | senha errada + `--validate-cred` | `estado: refused`, `mensagem: auth_failed`, exit 1 |
 | Feedback na tela (aceita) | `--page mkt-serial --validate-once` | rótulos `Usuário — ok` / `Senha — ok` e contorno verde |
 | Feedback na tela (recusada) | senha errada + `--validate-once` | rótulos `— recusado`, contorno amarelo, `serviço: auth_failed` |
 | Bolinha única (item 4) | Início com estado `refused` persistido | bolinha **amarela** em "SN da RB pelo IP" e **verde** em "Fabricante pelo MAC" |
 | Janela cabe na tela | abertura em monitor 1451×864 físico | janela enquadrada em 94 % da área útil (antes estourava e cortava a direita) |
-| Busca por gatilho + campos | digitar `:macv` + `Enter` | filtra para 1 ferramenta e abre o campo "MAC do equipamento" |
+| Busca por nome + campos | digitar `fabricante` + `Enter` | filtra para 1 ferramenta e abre o campo "MAC do equipamento" |
 | Aviso de resultado | `--preview-toast` | janela perto do cursor, valor copiável, fecha em 12 s |
 | Página da ferramenta | `--page mkt-serial` | os quatro blocos renderizam |
 

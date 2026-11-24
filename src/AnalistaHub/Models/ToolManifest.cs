@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using AnalistaHub.Services;
 
 namespace AnalistaHub.Models;
 
@@ -11,10 +12,27 @@ public sealed class ToolInput
     public string Arg { get; set; } = "";
     /// <summary>text | ip | mac</summary>
     public string Type { get; set; } = "text";
+    /// <summary>
+    /// Campo de IP que pede ping do destino enquanto o analista digita (NET-001, regra R14).
+    /// Só vale em <c>type: "ip"</c> — o gate --check-tools recusa o contrário.
+    /// </summary>
+    public bool Ping { get; set; }
     public bool Required { get; set; }
     /// <summary>Campo vazio = lê o valor da área de transferência.</summary>
     public bool EmptyUsesClipboard { get; set; }
+    /// <summary>Campo cujo conteúdo é sensível: vai mascarado para o histórico em disco.</summary>
+    public bool Sensitive { get; set; }
     public string Placeholder { get; set; } = "";
+    /// <summary>Teclas que este campo consome (contrato SQ-001): "ArrowUp", "ArrowDown", "Tab"…</summary>
+    [JsonPropertyName("consumedKeys")]
+    public List<string> ConsumedKeys { get; set; } = new();
+
+    /// <summary>Compatibilidade: o campo usa as setas?</summary>
+    [JsonIgnore]
+    public bool UsesArrows => ConsumedKeys.Any(k =>
+        k.Equals("ArrowUp", StringComparison.OrdinalIgnoreCase) ||
+        k.Equals("ArrowDown", StringComparison.OrdinalIgnoreCase));
+
     public string Hint { get; set; } = "";
     public string Example { get; set; } = "";
 }
@@ -88,7 +106,6 @@ public sealed class ToolManifest
     public string Category { get; set; } = "Geral";
     public string Description { get; set; } = "";
     public string LongDescription { get; set; } = "";
-    public string Trigger { get; set; } = "";
     /// <summary>Glifo Segoe MDL2 Assets, ex.: "\uE968".</summary>
     public string Icon { get; set; } = "\uE8A7";
     /// <summary>script (executa um programa) | dataset (consulta uma base local, sem processo).</summary>
@@ -202,4 +219,19 @@ public sealed class ToolManifest
     [JsonIgnore] public bool IconFileExists => IconIsFile && File.Exists(ExpandedIconFile);
 
     [JsonIgnore] public string IconGlyph => IconIsFile || string.IsNullOrEmpty(Icon) ? "\uE8A7" : Icon;
+
+    /// <summary>
+    /// Rótulo do histórico: os valores na ordem dos campos, com os campos marcados
+    /// <c>sensitive</c> mascarados (o histórico é gravado em disco, em texto puro).
+    /// </summary>
+    public string HistoryLabel(IReadOnlyDictionary<string, string> inputs)
+    {
+        var parts = new List<string>();
+        foreach (var campo in Inputs)
+        {
+            if (!inputs.TryGetValue(campo.Key, out var valor) || string.IsNullOrWhiteSpace(valor)) continue;
+            parts.Add(FieldValidation.VisibleValue(campo, valor));
+        }
+        return string.Join(" · ", parts);
+    }
 }

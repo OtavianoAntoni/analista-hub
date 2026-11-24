@@ -14,7 +14,7 @@
 [CmdletBinding()]
 param(
     [string]$Mac = '',
-    [ValidateSet('popup', 'clipboard', 'type')][string]$Mode = 'popup',
+    [ValidateSet('popup', 'clipboard', 'type', 'hub')][string]$Mode = 'popup',
     [switch]$NoCache,
     # usado internamente pelo processo filho do popup
     [string]$PopupB64 = ''
@@ -137,6 +137,16 @@ $rawShow = if ($raw) { $raw.Trim() } else { '(vazio)' }
 
 function Finish([string]$status, [string]$text, [string]$detail) {
     switch ($Mode) {
+        'hub' {
+            # contrato do Analista Hub: JSON no stdout; sem popup, sem clipboard e sem escrever o
+            # erro como se fosse valor. status ok -> valor; error -> falha, com o motivo em detail.
+            $payload = [ordered]@{
+                status = if ($status -eq 'OK') { 'ok' } else { 'error' }
+                value  = $text
+                detail = $detail
+            }
+            [Console]::Out.Write(($payload | ConvertTo-Json -Compress))
+        }
         'type' {
             if ($status -eq 'OK') { [Console]::Out.Write($text) }
             else { [Console]::Out.Write($detail) }

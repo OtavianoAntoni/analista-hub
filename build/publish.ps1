@@ -96,7 +96,7 @@ $files = (Get-ChildItem $outDir -Recurse -File | Measure-Object).Count
 Write-Host "== pronto: $files arquivos, $totalMb MB em $outDir"
 
 # Gate permanente: nenhuma publicação passa com ferramenta fora das regras
-# (gatilho inválido/duplicado, script ausente, credencial sem campo). Ver docs/REGRAS-DE-FERRAMENTA.md
+# (manifesto inválido, script ausente, credencial sem campo, resíduo de "trigger"). Ver docs/REGRAS-DE-FERRAMENTA.md
 Write-Host "== gate de catálogo (docs/REGRAS-DE-FERRAMENTA.md)"
 $gateScript = Join-Path $root 'build\check-tools.ps1'
 $gateExe = Join-Path $outDir 'AnalistaHub.exe'

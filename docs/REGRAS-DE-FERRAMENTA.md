@@ -4,46 +4,52 @@ Este documento é a regra única do projeto. Vale para as ferramentas que já ex
 as que surgirem depois** — não é sugestão, é o contrato. Se uma ferramenta nova não cumprir um item
 daqui, o build de publicação **falha** (gate automático, ver `build/check-tools.ps1`).
 
-Fonte no código: `src/AnalistaHub/Services/TriggerPolicy.cs` (gatilho),
+Fonte no código: `src/AnalistaHub/Services/ToolCatalog.cs` (busca por nome/descrição),
+`Services/HotkeyService.cs` + `App.ApplyToolHotkey` (atalhos),
 `CredentialValidator`/`CredentialStore` (credenciais), `MainWindow` (status).
 
 ---
 
-## R1 — Gatilho: uma regra só, aplicada a todas as ferramentas
+## R1 — Invocação: nome na busca ou atalho da ferramenta (não existe mais "gatilho")
 
-Todo gatilho — de ferramenta nova ou existente — passa por `TriggerPolicy`:
+O conceito de **gatilho de ferramenta** (`:mkt`, `:sse`) foi removido no 2.2.1. Sobraram duas formas de
+invocar:
 
-| Regra | Detalhe |
+| Forma | Como funciona |
 |---|---|
-| Forma | começa com `:`, minúsculas, sem espaço |
-| Caracteres | `a-z`, `0-9`, `-`, `_` depois dos dois-pontos |
-| Tamanho | 2 a 32 caracteres no total |
-| Unicidade | não pode repetir o de outra ferramenta do catálogo |
+| Busca rápida | atalho global (`Ctrl+Alt+Espaço` por padrão) → digite parte do **nome** ou da **descrição** → `Enter` |
+| Atalho da ferramenta | combinação global própria, gravada em `settings.json` (`ToolHotkeys`) e definida na página da ferramenta |
 
-O que **não** pode existir: tela com campo de gatilho livre sem validação, manifesto com gatilho em
-outro formato, ou ferramenta sem gatilho. O normalizador é o mesmo para todas (`TriggerPolicy.Normalize`).
+O que **não** pode existir: campo de gatilho na UI, chave `trigger` no manifesto, `TriggerOverrides` em
+`settings.json`. Configuração de versão anterior carrega sem erro — a chave é ignorada, o log registra
+`migração 2.2.1: N gatilho(s) de ferramenta ignorado(s)` e a primeira gravação limpa o arquivo.
 
-## R2 — Interação do gatilho: igual em toda ferramenta (espelha o atalho global)
+Não há mais unicidade de token para validar: a busca pontua **nome** primeiro e depois
+descrição/categoria, então um código curto repetido não torna a busca ambígua — nomes repetidos são
+problema de catálogo, não de digitação.
 
-1. O campo mostra o gatilho atual e o botão **Definir gatilho**.
-2. A captura só acontece **armada** — tecla digitada fora de captura não altera nada.
-3. Ao confirmar (`Enter` ou sair do campo), a regra R1 valida e o resultado é mostrado:
-   - verde + `— ok · gatilho ativo :x` quando aceito;
-   - amarelo + `recusado: <motivo>` quando não.
-4. `Esc` cancela. O gatilho antigo continua valendo.
-5. Gravado em `settings.json` (`TriggerOverrides`) e aplicado na hora: busca do HUD, cartões e
-   histórico usam o valor efetivo (`SettingsService.TriggerFor`).
+## R2 — Atalho da ferramenta: mesmo desenho do atalho global
 
-O atalho global (Ctrl+Alt+Espaço) segue o mesmo desenho — armar, capturar, validar, gravar — com a
-regra do Windows (precisa de modificador). Nenhuma das duas capturas fica "solta" no projeto.
+1. A página da ferramenta mostra o atalho atual e o botão **Definir atalho**; a captura só acontece
+   **armada** — tecla digitada fora de captura não altera nada.
+2. A combinação precisa de pelo menos um modificador (Ctrl, Alt, Shift ou Win). `Esc` cancela.
+3. Gravação **transacional** (`App.ApplyToolHotkey`): se o Windows recusar (1409 = já em uso) ou se a
+   combinação for a da busca, o atalho anterior continua valendo e a tela diz o motivo.
+4. **Comportamento do atalho** (por ferramenta, em `settings.json`):
+   - **Consultar direto** — usa o valor da área de transferência **no momento do atalho**;
+   - **Aguardar input** (padrão) — abre a ferramenta com o primeiro campo focado.
+   Clipboard vazio ou valor inválido em *Consultar direto* cai para *Aguardar input*, com **uma**
+   mensagem dizendo o motivo.
+5. O valor copiado passa pela **mesma** validação da digitação (`Services/FieldValidation.cs`).
 
 ## R3 — Ferramenta nova: checklist obrigatório
 
 1. Manifesto `.json` em `src/AnalistaHub/tools/` (ou em `%LOCALAPPDATA%\AnalistaHub\tools\`).
-2. `id`, `name`, `description`, `trigger` preenchidos e **ou** `script` (ferramenta que executa
+2. `id`, `name`, `description` preenchidos e **ou** `script` (ferramenta que executa
    programa) **ou** `kind: "dataset"` + `dataset` (ferramenta que consulta uma base local, sem
    processo e sem rede — o painel é próprio, ver `docs/FERRAMENTA-CONSULTA-SSE.md`).
-3. Gatilho cumprindo R1 — o gate barra duplicado e formato inválido.
+3. Nome que o analista consiga achar: a busca é por nome/descrição, então `name` e `description`
+   são a interface de invocação. Nada de código curto no manifesto.
 4. Saída declarada (`output.valueLabel`) dizendo **o que** é copiado.
 5. Se o script pede credencial: `credentials.fields` com `env` (nunca argumento de linha de
    comando) e, quando o serviço permitir, `credentials.validation` para validar ao digitar.
@@ -82,7 +88,7 @@ Proibido criar uma segunda bolinha para "status de login": o estado de autentica
 `build/publish.ps1` roda `AnalistaHub.exe --check-tools` no pacote gerado e **aborta** se houver:
 
 - manifesto inválido ou script inexistente;
-- gatilho fora da R1, duplicado ou ausente;
+- `trigger` presente no manifesto (o conceito não existe mais — o gate aponta o campo a remover);
 - credenciais declaradas sem campos.
 
 Ou seja: não é possível publicar uma ferramenta que não siga a R1–R5 por distração.
@@ -171,9 +177,43 @@ Regra irmã (mesma família de defeito): a HUD **não repete** a descrição no 
 e a dica do campo **não mostra o conteúdo da área de transferência**. Foi exatamente isso que produziu
 o campo `• agora: • agora: cidades • 161 com NM • 2026-11-23` no `:mkt`, `:macv` e `:sse`.
 
+## R13 — Tema: nenhuma cor fixa de tema
+
+- Toda cor de **superfície ou texto** vem de `ThemeDictionaries` (`HubHudBackground`, `HubCardBackground`,
+  `HubStroke`, `HubTile`, `HubMonoValue`, `HubDimText`, `HubOk/Warn/Bad/Unknown`) ou de `ThemeResource`
+  do sistema. Cor hexadecimal fixa só é aceita quando é a cor da própria marca (ex.: selo de sigla).
+- Nenhuma janela define `RequestedTheme` com valor fixo: usa `UiKit.ApplyTheme(RootGrid)` **antes** de
+  `Activate` (aplicar depois pisca).
+- Elementos criados em código usam `UiKit.Ok/Warn/Bad/Unknown/DimText/SubtleStroke`, que escolhem a
+  variante pelo tema efetivo — não existe `SetResourceReference` no WinUI 3.
+- Trocar o tema em Configurações reaplica em **todas** as janelas abertas (`HudController`,
+  `ToastController`, `SsePanelController`).
+- Contraste mínimo: 4,5:1 (WCAG AA) para texto nos dois temas, medido por cálculo de luminância.
+
+## R14 — Ping do destino: declarado no manifesto, sem processo `ping.exe`
+
+Subferramenta (NET-001): campo de IP pode pingar o destino **enquanto o analista digita**. Especificação
+completa em `docs/SUBFERRAMENTA-PING.md`; fonte em `Services/IpPing.cs`.
+
+| Regra | Detalhe |
+|---|---|
+| Declaração | `"ping": true` no campo de `type: "ip"` do manifesto. Em outro tipo de campo o gate **falha** |
+| Gatilho | IPv4 completo e válido (CIDR aceito: `10.0.0.1/32` pinga o endereço) |
+| Espera | debounce de `PingDebounceMs` (padrão **400 ms**, Configurações) depois da última tecla |
+| Edição | qualquer alteração no texto cancela o ping em curso e reagenda o debounce |
+| Pacote | 1 eco ICMP por disparo, timeout `PingTimeoutMs` (padrão **1000 ms**, Configurações) |
+| Exibição | **1 linha** ao lado do campo, opacidade **75%**: `1 ms`, `sem resposta`, `destino inalcançável` |
+| Resultado | o aviso da ferramenta mostra os **2 últimos retornos** do endereço consultado (`ping · 3 ms · 4 ms`) |
+| Trava | **100 disparos por invocação** (reset ao reabrir a ferramenta); ao estourar, para e avisa no rodapé |
+| Sem processo | ICMP pela API do Windows (`System.Net.NetworkInformation.Ping`) — proibido chamar `ping.exe`, que deixaria processo órfão ao cancelar |
+
+Provas: `--ping <ip>` (ICMP real e timeout), `--ping-sim` (debounce, cancelamento e trava de 100 sem
+tocar na rede) e `--check-tools` (declaração no manifesto).
+
 ## Como isso chega às próximas sessões
 
-- `SPEC.md` §7 (contrato), §5.1 (atalho), §6.5/§6.6 (credenciais), §13 (gate).
+- `SPEC.md` §7 (contrato), §5.1 (atalho), §6.5/§6.6 (credenciais), §6.7 (ping), §13 (gate).
+- `docs/SUBFERRAMENTA-PING.md` — comportamento e API do ping, para a próxima ferramenta que usar.
 - `README.md` — seção "Adicionar uma ferramenta".
 - Skill `winui3-unpackaged-sem-visual-studio` — armadilhas de captura e validação.
 - Este arquivo é citado pelos três: quem duvidar da regra, confere aqui.

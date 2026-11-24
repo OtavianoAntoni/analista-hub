@@ -130,7 +130,7 @@ public sealed class SseCatalog
             if (rede is not null)
             {
                 catalog.RedeLocalCarregada = true;
-                catalog.RedeLocalPath = Path.Combine(AppPaths.DataDir, RedeLocalNome);
+                catalog.RedeLocalPath = CaminhoRedeLocal();
                 foreach (var city in catalog.Cities)
                 {
                     if (!rede.TryGetValue(ChaveRede(city.Key, city.Uf), out var rows) || rows.Count == 0) continue;
@@ -165,12 +165,28 @@ public sealed class SseCatalog
         (key.Trim() + "|" + uf.Trim()).ToUpperInvariant();
 
     /// <summary>
+    /// Arquivo com as redes internas. Caminho vem do config.local.json (`sse-rede.path`) — pode ser
+    /// uma pasta compartilhada da empresa ou a pasta sincronizada do OneDrive. Sem a chave, usa o
+    /// arquivo ao lado dos dados do usuário.
+    /// </summary>
+    private static string CaminhoRedeLocal()
+    {
+        var configurado = LocalConfig.Get("sse-rede.path");
+        if (!string.IsNullOrWhiteSpace(configurado))
+        {
+            var expandido = Environment.ExpandEnvironmentVariables(configurado.Replace('/', '\\').Trim());
+            if (Path.IsPathRooted(expandido)) return expandido;
+        }
+        return Path.Combine(AppPaths.DataDir, RedeLocalNome);
+    }
+
+    /// <summary>
     /// Lê as redes internas do arquivo local. Ausente = a consulta funciona só com sigla/UF — é o que
     /// acontece em qualquer clone do repositório, porque NM/OLT/VPN não fazem parte da base pública.
     /// </summary>
     private static Dictionary<string, List<SseRow>>? CarregarRedeLocal()
     {
-        var path = Path.Combine(AppPaths.DataDir, RedeLocalNome);
+        var path = CaminhoRedeLocal();
         if (!File.Exists(path))
         {
             AppPaths.Log("SseCatalog: rede local ausente (consulta sem NM/OLT/VPN) — " + path);

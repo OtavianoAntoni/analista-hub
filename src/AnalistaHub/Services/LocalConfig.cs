@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -62,10 +63,45 @@ public static class LocalConfig
         }
     }
 
+    /// <summary>Valor bruto de uma chave ("" quando não existe). Não interpreta ${CFG:}.</summary>
+    public static string Get(string chave)
+    {
+        if (string.IsNullOrWhiteSpace(chave)) return "";
+        return Values.TryGetValue(chave, out var valor) ? valor : "";
+    }
+
     /// <summary>Recarrega do disco (usado depois de gravar o arquivo).</summary>
     public static void Invalidate()
     {
         lock (Gate) { _values = null; Faltando.Clear(); }
+    }
+
+    /// <summary>
+    /// Primeira execução — ou pasta de dados apagada: cria o arquivo-modelo com as chaves que o
+    /// catálogo pediu, vazias e com instrução. Sem isso a ferramenta falhava com "erro de
+    /// comunicação" em vez de dizer o que faltava (NET-003).
+    /// </summary>
+    public static void EnsureTemplate(IEnumerable<string>? chaves = null)
+    {
+        try
+        {
+            if (File.Exists(FilePath)) return;
+
+            Directory.CreateDirectory(AppPaths.DataDir);
+
+            var valores = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["_leia-me"] = "Preencha os valores desta máquina. O modelo comentado está em " +
+                               "config.example.json no repositório."
+            };
+            foreach (var chave in (chaves ?? Enumerable.Empty<string>()).OrderBy(x => x))
+                valores[chave] = "";
+
+            var json = JsonSerializer.Serialize(valores, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(FilePath, json, new UTF8Encoding(false));
+            AppPaths.Log($"LocalConfig: modelo criado em {FilePath} com {valores.Count - 1} chave(s) — preencha os valores");
+        }
+        catch (Exception ex) { AppPaths.Log("LocalConfig.EnsureTemplate: " + ex.Message); }
     }
 
     /// <summary>Troca cada <c>${CFG:chave}</c> pelo valor local. Chave ausente vira texto vazio e entra em <see cref="Faltando"/>.</summary>

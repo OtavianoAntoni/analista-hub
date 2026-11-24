@@ -70,7 +70,8 @@ Rodar `build_merge.py` e copiar o JSON para `%LOCALAPPDATA%\AnalistaHub\sse-cida
 ## 3. Comportamento
 
 ### 3.1 Chamada
-- Gatilho `:sse` (aceita `:ss`, `sse`) e o nome "Consulta SSE".
+- O nome **"Consulta SSE"** (a busca aceita "consulta", "sse" e a categoria). Não existe código curto
+  desde o 2.2.1 — o antigo `:sse` saiu junto com o conceito de gatilho.
 - Card na janela principal, categoria **SSE**; item no menu da bandeja.
 - `AnalistaHub.exe --sse [termo]` abre o painel já com a busca preenchida (diagnóstico).
 - Sem configuração e sem credencial.

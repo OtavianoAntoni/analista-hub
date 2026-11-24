@@ -4,7 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <Grid x:Name="RootGrid" Background="{StaticResource HubHudBackground}">
+    <Grid x:Name="RootGrid" Background="{ThemeResource HubHudBackground}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -71,7 +71,7 @@
                                 <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold"
                                            VerticalAlignment="Center" />
                                 <Border Grid.Column="1" CornerRadius="4" Padding="6,2"
-                                        Background="#1AFFFFFF" VerticalAlignment="Center">
+                                        Background="{ThemeResource HubTile}" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding Uf}" FontFamily="Consolas" FontSize="10.5"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 </Border>

@@ -26,7 +26,7 @@ public static class Cli
     public static bool IsCliInvocation(string[] args) =>
         args.Length > 0 && args[0] is "--list-tools" or "--test" or "--probe" or "--version" or "--help"
             or "--set-cred" or "--clear-cred" or "--set-trigger" or "--validate-cred" or "--check-tools"
-            or "--try-hotkey" or "--whatsnew"
+            or "--try-hotkey" or "--whatsnew" or "--hotkeys" or "--ping" or "--ping-sim"
             or "--check-update" or "--download-update" or "--apply-update";
 
     public static int Run(string[] args, ToolCatalog catalog)
@@ -56,13 +56,63 @@ public static class Cli
                 output.AppendLine("  AnalistaHub.exe --set-cred <id> <campo>   grava credencial lida do STDIN");
                 output.AppendLine("  AnalistaHub.exe --clear-cred <id>   apaga as credenciais guardadas da ferramenta");
                 output.AppendLine("  AnalistaHub.exe --validate-cred <id> confirma as credenciais no serviço");
-                output.AppendLine("  AnalistaHub.exe --check-tools       valida o catálogo (gatilho, script, campos)");
+                output.AppendLine("  AnalistaHub.exe --check-tools       valida o catálogo (manifesto, script, campos)");
                 output.AppendLine("  AnalistaHub.exe --try-hotkey [combo] testa se o Windows libera o atalho global");
+                output.AppendLine("  AnalistaHub.exe --ping <ip> [--count N] [--timeout ms]  pinga o destino (ICMP) e mede");
+                output.AppendLine("  AnalistaHub.exe --ping-sim [--debounce ms]  prova debounce, cancelamento e trava de 100");
                 output.AppendLine("  AnalistaHub.exe --whatsnew         mostra o que mudou na versão instalada (PATCHLOG)");
                 output.AppendLine("  AnalistaHub.exe --check-update      consulta o canal de atualização e imprime o resultado");
                 output.AppendLine("  AnalistaHub.exe --download-update   baixa e prepara a atualização (não aplica)");
                 output.AppendLine("  AnalistaHub.exe --apply-update      aplica a atualização preparada e reabre o app");
                 break;
+
+            case "--hotkeys":
+            {
+                // Diagnóstico dos atalhos por ferramenta: registra um a um numa janela descartável e
+                // relata aceite, recusa e conflito — sem abrir a interface.
+                var hwnd = CreateWindowEx(0, "STATIC", "hub-hotkeys-test", 0, 0, 0, 0, 0,
+                    IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                if (hwnd == IntPtr.Zero)
+                {
+                    output.AppendLine(Json(new { ok = false, erro = "não consegui criar janela de teste" }));
+                    break;
+                }
+
+                var linhas = new List<object>();
+                var paleta = SettingsService.Current.Hotkey;
+
+                using (var svc = new HotkeyService(hwnd))
+                {
+                    var paletaOk = svc.Register(paleta, out var erroPaleta);
+
+                    foreach (var par in SettingsService.Current.ToolHotkeys.OrderBy(p => p.Key))
+                    {
+                        var conflito = svc.Conflito(par.Value, par.Key);
+                        var ok = conflito is null && svc.RegisterTool(par.Key, par.Value, out _);
+                        var erro = conflito ?? (ok ? "" : "o Windows recusou esta combinação");
+                        linhas.Add(new
+                        {
+                            ferramenta = par.Key,
+                            atalho = par.Value,
+                            ok,
+                            problema = erro
+                        });
+                        // mantém registrado: o próximo é checado contra este (é o que revela conflito)
+                    }
+
+                    output.AppendLine(Json(new
+                    {
+                        ok = linhas.Cast<dynamic>().All(l => (bool)l.ok),
+                        paleta,
+                        paleta_registrada = paletaOk,
+                        erro_paleta = erroPaleta,
+                        atalhos = linhas
+                    }, true));
+                }
+
+                DestroyWindow(hwnd);
+                break;
+            }
 
             case "--try-hotkey":
             {
@@ -118,9 +168,9 @@ public static class Cli
 
             case "--check-tools":
             {
-                // --skip-scripts valida só a estrutura do catálogo (gatilhos, duplicidade, base local,
-                // campos de credencial) sem exigir o arquivo do script — útil em build que não copiou
-                // tools/ ainda. A regra de LOCAL do script vale sempre (ver docs/REGRAS-DE-FERRAMENTA.md R9).
+                // --skip-scripts valida só a estrutura do catálogo (base local, campos de credencial)
+                // sem exigir o arquivo do script — útil em build que não copiou tools/ ainda.
+                // A regra de LOCAL do script vale sempre (ver docs/REGRAS-DE-FERRAMENTA.md R9).
                 var skipScripts = args.Contains("--skip-scripts");
                 var problems = new List<object>();
                 foreach (var tool in catalog.Tools)
@@ -130,10 +180,6 @@ public static class Cli
                         problems.Add(new { id = tool.Id, problema = "manifesto: " + tool.LoadError });
                         continue;
                     }
-
-                    var trigger = SettingsService.TriggerFor(tool);
-                    var triggerError = TriggerPolicy.Validate(trigger, catalog, tool.Id);
-                    if (triggerError is not null) problems.Add(new { id = tool.Id, problema = "gatilho: " + triggerError });
 
                     if (tool.IsDataset)
                     {
@@ -161,6 +207,18 @@ public static class Cli
                     // ícone que o analista escolheu.
                     if (tool.IconIsFile && !tool.IconFileExists)
                         problems.Add(new { id = tool.Id, problema = "ícone não encontrado: " + tool.ExpandedIconFile });
+
+                    // R14: "ping" é do campo de IP. Em campo de texto o HUD não teria o que pingar,
+                    // e a promessa do manifesto ficaria só no papel.
+                    foreach (var campo in tool.Inputs.Where(i => i.Ping &&
+                                 !string.Equals(i.Type, "ip", StringComparison.OrdinalIgnoreCase)))
+                        problems.Add(new { id = tool.Id, problema = $"ping declarado fora de campo IP: «{campo.Label}» ({campo.Type})" });
+
+                    // CFG-002: o conceito de gatilho saiu do produto no 2.2.1. Um manifesto antigo com
+                    // "trigger" carregaria em silêncio (chave desconhecida é ignorada) prometendo algo
+                    // que ninguém usa — o gate manda remover.
+                    if (ManifestoDeclara("trigger", tool.SourcePath))
+                        problems.Add(new { id = tool.Id, problema = "manifesto ainda declara \"trigger\" — remova o campo (CFG-002, 2.2.1)" });
                 }
 
                 // Chaves ${CFG:...} que o catálogo pediu e a máquina não tem. NÃO é erro de catálogo
@@ -168,6 +226,16 @@ public static class Cli
                 var avisos = LocalConfig.Faltando
                     .Select(k => $"configuração local ausente: {k} (em {LocalConfig.FilePath})")
                     .ToList();
+
+                // NET-002: lista de NMs apontada na configuração mas inacessível (pasta da rede fora
+                // do ar, OneDrive não sincronizado, caminho digitado errado)
+                var caminhoRede = LocalConfig.Get("sse-rede.path");
+                if (!string.IsNullOrWhiteSpace(caminhoRede))
+                {
+                    var expandido = Environment.ExpandEnvironmentVariables(caminhoRede.Replace('/', '\\').Trim());
+                    if (!System.IO.File.Exists(expandido))
+                        avisos.Add($"lista de NMs configurada mas inacessível: {expandido}");
+                }
 
                 output.AppendLine(Json(new
                 {
@@ -226,16 +294,6 @@ public static class Cli
                 return state.Complete ? 0 : 0;
             }
 
-            case "--set-trigger":
-            {
-                var tool = catalog.Find(args.ElementAtOrDefault(1) ?? "");
-                if (tool is null) return Fail(output, "ferramenta não encontrada");
-                var value = args.ElementAtOrDefault(2) ?? "";
-                SettingsService.SetTrigger(tool, value);
-                output.AppendLine(Json(new { ok = true, ferramenta = tool.Id, gatilho = SettingsService.TriggerFor(tool) }));
-                break;
-            }
-
             case "--clear-cred":
             {
                 var tool = catalog.Find(args.ElementAtOrDefault(1) ?? "");
@@ -252,7 +310,6 @@ public static class Cli
                     id = t.Id,
                     nome = t.Name,
                     tipo = t.IsDataset ? "dataset" : "script",
-                    gatilho = SettingsService.TriggerFor(t),
                     estado = t.IsBroken ? "com problema: " + t.LoadError : "ok",
                     script = t.IsDataset ? null : t.ExpandedScript,
                     script_existe = t.IsDataset ? (bool?)null : t.ScriptExists,
@@ -374,6 +431,58 @@ public static class Cli
                 return result.Ok ? 0 : 1;
             }
 
+            case "--ping":
+            {
+                // NET-001: prova real de ICMP pela MESMA sessão da HUD (sem processo ping.exe).
+                // Task.Run pelo mesmo motivo do --check-update: o CLI roda no thread do WinUI.
+                var alvo = args.ElementAtOrDefault(1) ?? "";
+                var count = Math.Clamp(IntArg(args, "--count", 1), 1, PingSession.MaxProbes);
+                var timeout = Math.Clamp(IntArg(args, "--timeout", SettingsService.Current.PingTimeoutMs), 200, 5000);
+                var sessao = new PingSession(timeout);
+
+                var amostras = Task.Run(async () =>
+                {
+                    var lista = new List<object>();
+                    for (var i = 0; i < count; i++)
+                    {
+                        var a = await sessao.ProbeAsync(alvo).ConfigureAwait(false);
+                        lista.Add(new
+                        {
+                            endereco = a.Address,
+                            estado = a.Outcome.ToString().ToLowerInvariant(),
+                            latencia_ms = a.RoundtripMs,
+                            texto = a.Text
+                        });
+                        if (!a.Reachable) break;
+                        if (i + 1 < count) await Task.Delay(200).ConfigureAwait(false);
+                    }
+                    return lista;
+                }).GetAwaiter().GetResult();
+
+                var alcancou = sessao.Recent.LastOrDefault()?.Reachable == true;
+                output.AppendLine(Json(new
+                {
+                    ok = alcancou,
+                    alvo = alvo.Trim(),
+                    timeout_ms = sessao.TimeoutMs,
+                    disparos = sessao.Used,
+                    trava = PingSession.MaxProbes,
+                    amostras
+                }, true));
+                Write(output.ToString());
+                return alcancou ? 0 : 1;
+            }
+
+            case "--ping-sim":
+            {
+                // Prova o que não depende da rede: debounce, cancelamento por edição e trava de 100.
+                var debounce = Math.Clamp(IntArg(args, "--debounce", SettingsService.Current.PingDebounceMs), 0, 5000);
+                var sim = Task.Run(() => PingSimulation.RunAsync(debounce)).GetAwaiter().GetResult();
+                output.AppendLine(Json(sim, true));
+                Write(output.ToString());
+                return sim.Ok ? 0 : 1;
+            }
+
             case "--check-update":
             {
                 // Task.Run: o modo CLI roda no thread do WinUI, que tem SynchronizationContext —
@@ -463,6 +572,13 @@ public static class Cli
         catch { }
     }
 
+    private static int IntArg(string[] args, string name, int fallback)
+    {
+        var idx = Array.IndexOf(args, name);
+        if (idx < 0 || idx + 1 >= args.Length) return fallback;
+        return int.TryParse(args[idx + 1], out var value) ? value : fallback;
+    }
+
     /// <summary>
     /// Regra R12 (docs/REGRAS-DE-FERRAMENTA.md): descrição = frase curta do que a ferramenta faz.
     /// Sem contagem, data, "agora:", separadores de metadado ou quebra de linha.
@@ -481,6 +597,23 @@ public static class Cli
         if (System.Text.RegularExpressions.Regex.IsMatch(desc, @"(?i)\d+\s+(cidades|com\s+nm|ferramentas?|itens?|registros?)"))
             return "com contagem de itens — isso é estado, não descrição";
         return null;
+    }
+
+    /// <summary>
+    /// O manifesto declara essa chave no JSON? Usado pelo gate para o que saiu do produto (CFG-002:
+    /// `trigger`) — chave desconhecida não estoura o carregamento, então sem esta checagem o resíduo
+    /// passaria batido para sempre.
+    /// </summary>
+    private static bool ManifestoDeclara(string chave, string path)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                   doc.RootElement.EnumerateObject().Any(p =>
+                       string.Equals(p.Name, chave, StringComparison.OrdinalIgnoreCase));
+        }
+        catch { return false; }
     }
 
     private static string Json(object value, bool writeIndented = false) =>

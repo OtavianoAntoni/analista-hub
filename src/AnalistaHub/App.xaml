@@ -9,13 +9,46 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
 
-            <!-- Identidade visual do HUB (escuro, discreto, legível) -->
+            <!-- Identidade visual do HUB. Cada brush do HUB tem par claro/escuro: a janela escolhe o
+                 tema em tempo de execução e estas chaves seguem a escolha (regra R13). -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="HubHudBackground" Color="#F21B1D26" />
+                    <SolidColorBrush x:Key="HubTile" Color="#1AFFFFFF" />
+                    <SolidColorBrush x:Key="HubPageBackground" Color="#FF1B1D26" />
+                    <SolidColorBrush x:Key="HubCardBackground" Color="#FF23252F" />
+                    <SolidColorBrush x:Key="HubStroke" Color="#33FFFFFF" />
+                    <SolidColorBrush x:Key="HubSubtleStroke" Color="#3CFFFFFF" />
+                    <SolidColorBrush x:Key="HubMonoValue" Color="#FF9CE8FF" />
+                    <SolidColorBrush x:Key="HubDimText" Color="#AAFFFFFF" />
+                    <SolidColorBrush x:Key="HubOk" Color="#FF6CD68A" />
+                    <SolidColorBrush x:Key="HubWarn" Color="#FFE8B84B" />
+                    <SolidColorBrush x:Key="HubBad" Color="#FFE87A7A" />
+                    <SolidColorBrush x:Key="HubUnknown" Color="#FF8A8A8A" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="HubHudBackground" Color="#F2F7F8FA" />
+                    <SolidColorBrush x:Key="HubTile" Color="#14000000" />
+                    <SolidColorBrush x:Key="HubPageBackground" Color="#FFF7F8FA" />
+                    <SolidColorBrush x:Key="HubCardBackground" Color="#FFFFFFFF" />
+                    <SolidColorBrush x:Key="HubStroke" Color="#1F000000" />
+                    <SolidColorBrush x:Key="HubSubtleStroke" Color="#3C000000" />
+                    <SolidColorBrush x:Key="HubMonoValue" Color="#FF0A5C7A" />
+                    <SolidColorBrush x:Key="HubDimText" Color="#AA000000" />
+                    <SolidColorBrush x:Key="HubOk" Color="#FF1B6B3A" />
+                    <SolidColorBrush x:Key="HubWarn" Color="#FF8A5A00" />
+                    <SolidColorBrush x:Key="HubBad" Color="#FFB4232C" />
+                    <SolidColorBrush x:Key="HubUnknown" Color="#FF555555" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+
             <Color x:Key="HubAccentColor">#FF3FA7D6</Color>
             <SolidColorBrush x:Key="HubAccentBrush" Color="{StaticResource HubAccentColor}" />
-            <SolidColorBrush x:Key="HubHudBackground" Color="#F21B1D26" />
-            <SolidColorBrush x:Key="HubCardBackground" Color="#FF23252F" />
-            <SolidColorBrush x:Key="HubStroke" Color="#33FFFFFF" />
-            <SolidColorBrush x:Key="HubMonoValue" Color="#FF9CE8FF" />
+
+            <Style x:Key="HubDangerButton" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+                <Setter Property="Background" Value="#FFB4232C" />
+                <Setter Property="Foreground" Value="White" />
+            </Style>
 
             <Style x:Key="HubMono" TargetType="TextBlock">
                 <Setter Property="FontFamily" Value="Consolas" />

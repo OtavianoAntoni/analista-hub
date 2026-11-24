@@ -18,8 +18,6 @@ public sealed class AppSettings
     /// <summary>Modo de saída escolhido por ferramenta (id -> clipboard|type|notify).</summary>
     public Dictionary<string, string> OutputMode { get; set; } = new();
     public Dictionary<string, string> LastInput { get; set; } = new();
-    /// <summary>Gatilho redefinido pelo usuário (id -> ":mkt").</summary>
-    public Dictionary<string, string> TriggerOverrides { get; set; } = new();
     /// <summary>Último resultado conhecido da validação de credencial (id -> "estado|quando|mensagem").</summary>
     public Dictionary<string, string> AuthStatus { get; set; } = new();
     /// <summary>Última página aberta (id da ferramenta ou "home"/"settings"), para reabrir onde parou.</summary>
@@ -36,8 +34,29 @@ public sealed class AppSettings
     public bool SseShowNoNodes { get; set; }
     /// <summary>Consulta SSE: mostrar a linha "fonte: …" no rodapé (padrão: oculto).</summary>
     public bool SseShowSource { get; set; }
-    /// <summary>Consulta SSE: mostrar o resumo da base no cabeçalho (padrão: oculto).</summary>
+    /// <summary>Consulta: mostrar o resumo da base no cabeçalho.</summary>
     public bool SseShowBaseInfo { get; set; }
+
+    /// <summary>Busca rápida: fechar ao clicar fora (padrão ligado — comportamento histórico).</summary>
+    public bool HudCloseOnClickOutside { get; set; } = true;
+
+    // ---- ping do destino (NET-001, docs/SUBFERRAMENTA-PING.md) ----
+    /// <summary>Espera depois da última tecla antes de pingar o IP do campo (ms).</summary>
+    public int PingDebounceMs { get; set; } = 400;
+    /// <summary>Tempo máximo de cada pacote ICMP (ms).</summary>
+    public int PingTimeoutMs { get; set; } = 1000;
+
+    /// <summary>Ferramentas removidas da busca rápida (continuam no menu lateral e na bandeja).</summary>
+    public List<string> HiddenTools { get; set; } = new();
+
+    /// <summary>Atalho global por ferramenta: id da ferramenta → combinação (ex.: "Ctrl+Alt+J").</summary>
+    public Dictionary<string, string> ToolHotkeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// O que o atalho da ferramenta faz ao ser acionado (CFG-003): id → "consult" | "ask".
+    /// Ausente = "ask" (aguardar input), que é o comportamento menos surpreendente.
+    /// </summary>
+    public Dictionary<string, string> ShortcutBehavior { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     // ---- atualizações ----
     /// <summary>Procurar atualização sozinho, no máximo uma vez por dia.</summary>
@@ -101,6 +120,11 @@ public static class SettingsService
             {
                 var json = File.ReadAllText(AppPaths.SettingsFile);
                 Current = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+
+                // CFG-002: gatilho de ferramenta saiu do produto (2.2.1). Um settings.json de versão
+                // anterior ainda traz "TriggerOverrides": o campo desconhecido é ignorado — a config
+                // carrega sem erro — e o aviso fica no log. A próxima gravação já limpa o arquivo.
+                AvisarGatilhosLegados(json);
             }
         }
         catch (Exception ex)
@@ -109,6 +133,27 @@ public static class SettingsService
             Current = new AppSettings();
         }
         if (string.IsNullOrWhiteSpace(Current.ToolsFolder)) Current.ToolsFolder = AppPaths.ToolsDir;
+    }
+
+    /// <summary>
+    /// Conta os gatilhos que ficaram no settings.json de uma versão anterior e registra no log.
+    /// Não é erro: é migração silenciosa, com rastro para quem for investigar depois.
+    /// </summary>
+    private static void AvisarGatilhosLegados(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (!string.Equals(prop.Name, "TriggerOverrides", StringComparison.OrdinalIgnoreCase)) continue;
+
+                var quantidade = prop.Value.ValueKind == JsonValueKind.Object ? prop.Value.EnumerateObject().Count() : 0;
+                AppPaths.Log($"migração 2.2.1: {quantidade} gatilho(s) de ferramenta ignorado(s) " +
+                             "(o conceito foi removido; a próxima gravação limpa o settings.json)");
+            }
+        }
+        catch { /* arquivo ilegível já é tratado pelo Load */ }
     }
 
     /// <summary>
@@ -150,21 +195,21 @@ public static class SettingsService
     public static string OutputModeFor(string toolId, string fallback) =>
         Current.OutputMode.TryGetValue(toolId, out var v) && !string.IsNullOrWhiteSpace(v) ? v : fallback;
 
-    /// <summary>Gatilho efetivo: o que o usuário definiu na aba da ferramenta vence o manifesto.</summary>
-    public static string TriggerFor(ToolManifest tool) =>
-        Current.TriggerOverrides.TryGetValue(tool.Id, out var v) && !string.IsNullOrWhiteSpace(v)
-            ? v.Trim()
-            : tool.Trigger;
+    /// <summary>
+    /// Comportamento do atalho da ferramenta (CFG-003). Padrão "ask" — abrir pedindo o valor é menos
+    /// surpreendente do que consultar o que estiver na área de transferência.
+    /// </summary>
+    public static string ShortcutBehaviorFor(string toolId) =>
+        Current.ShortcutBehavior.TryGetValue(toolId, out var v) && !string.IsNullOrWhiteSpace(v)
+            ? NormalizeShortcutBehavior(v)
+            : "ask";
 
-    public static void SetTrigger(ToolManifest tool, string trigger)
+    public static void SetShortcutBehavior(string toolId, string behavior)
     {
-        var value = (trigger ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(value)) Current.TriggerOverrides.Remove(tool.Id);
-        else
-        {
-            if (!value.StartsWith(':')) value = ":" + value;
-            Current.TriggerOverrides[tool.Id] = value;
-        }
+        Current.ShortcutBehavior[toolId] = NormalizeShortcutBehavior(behavior);
         Save();
     }
+
+    private static string NormalizeShortcutBehavior(string? behavior) =>
+        string.Equals((behavior ?? "").Trim(), "consult", StringComparison.OrdinalIgnoreCase) ? "consult" : "ask";
 }

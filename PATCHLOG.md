@@ -3,6 +3,91 @@
 > Formato: o resumo conta o que mudou para quem usa; o detalhamento fica separado por
 > **Adicionados**, **Corrigido** e **Removidos**. Cada item diz como foi verificado.
 
+## 2.2.1 — 24/11/2026
+
+**Resumo.** Correções de invocação e de mensagem, mais duas mudanças pedidas no patch: o atalho da
+ferramenta passa a ter comportamento explícito por ferramenta (abrir pedindo o valor ou consultar
+direto a área de transferência), e o conceito de *gatilho* (`:mkt`, `:sse`) saiu do produto — a
+ferramenta é encontrada pelo nome na busca ou pelo próprio atalho. O pacote também leva o **ping do
+destino (NET-001)** da rodada 2.2, que não teve release própria (ver seção 2.2 abaixo).
+
+### Corrigido
+
+- **Consulta SSE pela busca rápida (SQ-004, P0)**: ciclar com ↑↓ a partir de "SN da RB pelo IP" e
+  confirmar com `Enter` mandava a Consulta SSE para o caminho de execução de script e devolvia
+  `Script da ferramenta não encontrado:` — truncado, porque ela é base local e não tem script.
+  Agora ela fica só destacada na lista, o foco volta à busca e o `Enter` abre o painel.
+  Verificado com `--hud "SN da RB" --fill 10.0.0.1 --cycle consulta-sse --submit` em 3 execuções:
+  `fica na seleção (dataset ou sem campo)` + `ConsultaSse.ShowPanel: 30 resultado(s)`, sem linha de
+  execução no histórico.
+- **Mensagem duplicada no SN da RB pelo IP (NET-004)**: com IP inválido o analista via o popup do
+  próprio script **e** um aviso "Não foi possível"; o detalhe vinha do fim de `%TEMP%\mkt_serial.log`
+  sem marca de início, então citava a consulta anterior (`IP 255.255.255.252 sem SN (retorna 0)` para
+  um IP nunca digitado — confirmado no histórico real). Agora: uma mensagem só (`Erro de consulta` +
+  motivo), IP inválido recusado **antes** de executar e log lido apenas a partir da linha em que a
+  execução começou. Verificado nos casos vazio, malformado e válido sem SN, com captura por HWND do
+  aviso e histórico com a origem.
+- **`0` sem contexto**: `0` é resposta, não erro. O aviso passou a mostrar `<IP> sem SN` (texto vindo
+  do script) em vez de um zero solto, e a falha usa o cartão de alerta — antes ia pelo componente de
+  sucesso, com ícone verde.
+- **"Verificar conexão" em erro de digitação**: o botão passou a aparecer só em falha de rede.
+
+### Adicionados
+
+- **Comportamento do atalho por ferramenta (CFG-003)**: `Aguardar input` (padrão) ou
+  `Consultar direto`, gravado em `settings.json` (`ShortcutBehavior`). Em *Consultar direto* a área
+  de transferência é lida **no momento do atalho**; vazio/inválido cai para *Aguardar input* com um
+  único aviso. Feedback `Consultando <valor>…` antes do resultado e histórico com a origem
+  (`atalho/consult`, `atalho/ask`, `hud`, `painel`), mascarando campos declarados `sensitive`.
+  Verificado: `ask` abre os campos sem executar; `consult` executou e gravou `origem: "atalho/consult"`.
+- **Diagnósticos**: `--cycle <id>` (cicla até a ferramenta pelas mesmas setas) e `--tool-hotkey <id>`
+  (dispara o atalho pelo caminho de produção). Os timers de diagnóstico ganharam referência forte: o
+  `--submit` de 3800 ms não disparava em parte das execuções por coleta do GC.
+
+### Removidos
+
+- **Gatilho de ferramenta (CFG-002, breaking)**: campo na página da ferramenta, `trigger` nos
+  manifestos, `TriggerPolicy`, `TriggerOverrides` em `settings.json` e `--set-trigger`. Configuração
+  antiga carrega sem erro — o log registra `migração 2.2.1: N gatilho(s) de ferramenta ignorado(s)` e
+  a primeira gravação limpa o arquivo. Verificado com o `settings.json` real (3 gatilhos): reescrito
+  sem o campo e **sem nenhuma outra diferença**. `--check-tools` passou a recusar manifesto que ainda
+  declare `trigger` (verificado: `ok:false`, exit 1; volta a `ok:true` sem o manifesto).
+- **`legacyErrorPopup`** nos dois manifestos: `mkt_serial.ps1` e `mac_vendor.ps1` ganharam `-Mode hub`
+  (JSON `{status,value,detail}`) — sem popup próprio e sem escrever erro como se fosse valor.
+- **Serial real no `SPEC.md`** trocado por valor mascarado: o repositório é público.
+
+### Limitações desta rodada
+
+- "IP válido **com** SN" não foi executado (não há IP de inventário conhecido nesta máquina); o
+  caminho é o mesmo do "sem SN", que foi provado.
+- A gravação da preferência pelo clique no radio da tela não foi exercitada (WinUI não dispara
+  `Click` sintético); leitura e persistência foram provadas pelo arquivo e pelo comportamento.
+- `docs/REGRAS-DE-FERRAMENTA.md` R1/R2 reescritos: a unicidade de código curto deixou de existir.
+
+## 2.2 — integrado no 2.2.1 (não publicado separadamente)
+
+> Esta rodada de trabalho entrou no pacote **2.2.1**; não existe release v2.2.0.
+
+**Resumo.** O campo de IP passa a pingar o destino enquanto o analista digita: uma linha com a latência
+ao lado do campo e os dois últimos retornos no aviso de resultado. O ping é feito pela API do Windows —
+nenhum processo é criado, então cancelar não deixa `ping.exe` órfão —, espera 400 ms depois da última
+tecla, recomeça a cada edição e para sozinho depois de 100 disparos, para não virar tempestade de ICMP.
+
+### Adicionados
+
+- **Ping do destino (NET-001)**: campo de IP com `"ping": true` no manifesto (hoje o `:mkt`) mostra a
+  latência ao lado do campo com opacidade 75% e leva os 2 últimos retornos para o aviso de resultado.
+  Debounce e timeout configuráveis em Configurações → **Ping do destino**.
+  Verificado com `--ping-sim --debounce 400` (debounce medido em ~412 ms, 1 eco cancelado por edição,
+  trava em 100/100 com mensagem), `--ping 127.0.0.1 --count 2` (ICMP real, 0 ms) e captura por HWND
+  das duas telas (HUD com `0 ms` e aviso com `ping · 0 ms · 0 ms`).
+- **`--ping` e `--ping-sim`**: diagnóstico de ICMP real e da política de debounce/cancelamento/limite,
+  este último com emissor falso (não depende de rede).
+- **`docs/SUBFERRAMENTA-PING.md`** + regra **R14** em `docs/REGRAS-DE-FERRAMENTA.md`; gate
+  `--check-tools` passa a recusar `ping` declarado fora de campo de IP.
+- **Diagnóstico de tela**: `--hud <id> --fill <valor|a|b> [--submit]` preenche o campo (ou simula
+  edições) e executa pelo mesmo caminho do Enter — prova a UI sem teclado sintético.
+
 ## 2.1 — 24/11/2026
 
 **Resumo.** Esta versão tira o último resto de dependência do Espanso e prepara o projeto para ser

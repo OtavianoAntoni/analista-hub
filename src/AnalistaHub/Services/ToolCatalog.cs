@@ -172,12 +172,12 @@ public sealed class ToolCatalog
     public ToolManifest? Find(string id) =>
         Tools.FirstOrDefault(t => string.Equals(t.Id, id, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>Busca por nome, gatilho ou palavras da descrição (sem acento/caixa).</summary>
+    /// <summary>Busca por nome ou palavras da descrição (sem acento/caixa).</summary>
     public IEnumerable<ToolManifest> Search(string query)
     {
         var usable = Tools.Where(t => !t.IsBroken).ToList();
         if (string.IsNullOrWhiteSpace(query)) return usable.Take(50);
-        var q = Text.Fold(query.Trim().TrimStart(':'));
+        var q = Text.Fold(query.Trim());
         return usable
             .Select(t => (tool: t, score: Score(t, q)))
             .Where(x => x.score > 0)
@@ -187,24 +187,24 @@ public sealed class ToolCatalog
             .Take(50);
     }
 
+    /// <summary>
+    /// Pontuação da busca. CFG-002: o gatilho de ferramenta (:mkt) não existe mais — a invocação é
+    /// pelo nome, pela categoria e pela descrição (ou pelo atalho de teclado da ferramenta).
+    /// </summary>
     private static int Score(ToolManifest t, string q)
     {
         if (q.Length == 0) return 1;
         var name = Text.Fold(t.Name);
-        var trigger = Text.Fold(SettingsService.TriggerFor(t).TrimStart(':'));
         var desc = Text.Fold(t.Description + " " + t.Category + " " + t.LongDescription);
 
         if (name.Equals(q, StringComparison.Ordinal)) return 100;
-        if (trigger.Equals(q, StringComparison.Ordinal)) return 95;
         if (name.StartsWith(q, StringComparison.Ordinal)) return 80;
-        if (trigger.StartsWith(q, StringComparison.Ordinal)) return 75;
         if (name.Contains(q, StringComparison.Ordinal)) return 60;
-        if (trigger.Contains(q, StringComparison.Ordinal)) return 55;
         if (desc.Contains(q, StringComparison.Ordinal)) return 30;
 
         // busca por palavras soltas: todas precisam aparecer em algum lugar
         var parts = q.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length > 1 && parts.All(p => name.Contains(p) || desc.Contains(p) || trigger.Contains(p)))
+        if (parts.Length > 1 && parts.All(p => name.Contains(p) || desc.Contains(p)))
             return 20;
         return 0;
     }

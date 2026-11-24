@@ -32,11 +32,116 @@ public static class UiKit
             presenter.IsAlwaysOnTop = alwaysOnTop;
             appWindow.SetPresenter(presenter);
             if (hideFromAltTab) appWindow.IsShownInSwitchers = false;
-            ApplyDarkChrome(window, round: true);
+            ApplyChrome(window, round: true);
         }
         catch (Exception ex) { AppPaths.Log("MakeHudWindow: " + ex.Message); }
     }
 
+    /// <summary>Cartão de conteúdo: branco no claro, grafite no escuro.</summary>
+    public static Windows.UI.Color Card => EffectiveLight
+        ? Windows.UI.Color.FromArgb(255, 255, 255, 255)
+        : Windows.UI.Color.FromArgb(255, 0x23, 0x25, 0x2F);
+
+    /// <summary>Traço de cartão/separador.</summary>
+    public static Windows.UI.Color CardStroke => EffectiveLight
+        ? Windows.UI.Color.FromArgb(31, 0, 0, 0)
+        : Windows.UI.Color.FromArgb(51, 255, 255, 255);
+
+    /// <summary>Fundo de página (a janela principal pinta o próprio fundo, não usa Mica).</summary>
+    public static Windows.UI.Color Page => EffectiveLight
+        ? Windows.UI.Color.FromArgb(255, 0xF7, 0xF8, 0xFA)
+        : Windows.UI.Color.FromArgb(255, 0x1B, 0x1D, 0x26);
+
+    /// <summary>
+    /// Cores de estado para elementos criados em código. Em XAML vale o ThemeDictionaries; aqui a
+    /// escolha é explícita porque não há SetResourceReference no WinUI 3.
+    /// </summary>
+    public static Windows.UI.Color Ok => EffectiveLight
+        ? Windows.UI.Color.FromArgb(255, 0x1B, 0x6B, 0x3A)
+        : Windows.UI.Color.FromArgb(255, 0x6C, 0xD6, 0x8A);
+
+    public static Windows.UI.Color Warn => EffectiveLight
+        ? Windows.UI.Color.FromArgb(255, 0x8A, 0x5A, 0x00)
+        : Windows.UI.Color.FromArgb(255, 0xE8, 0xB8, 0x4B);
+
+    public static Windows.UI.Color Bad => EffectiveLight
+        ? Windows.UI.Color.FromArgb(255, 0xB4, 0x23, 0x2C)
+        : Windows.UI.Color.FromArgb(255, 0xE8, 0x7A, 0x7A);
+
+    public static Windows.UI.Color Unknown => EffectiveLight
+        ? Windows.UI.Color.FromArgb(255, 0x55, 0x55, 0x55)
+        : Windows.UI.Color.FromArgb(255, 0x8A, 0x8A, 0x8A);
+
+    public static Windows.UI.Color DimText => EffectiveLight
+        ? Windows.UI.Color.FromArgb(170, 0, 0, 0)
+        : Windows.UI.Color.FromArgb(170, 255, 255, 255);
+
+    public static Windows.UI.Color SubtleStroke => EffectiveLight
+        ? Windows.UI.Color.FromArgb(60, 0, 0, 0)
+        : Windows.UI.Color.FromArgb(60, 255, 255, 255);
+
+    /// <summary>
+    /// Tema efetivo do app: a preferência das Configurações, com "Sistema" resolvido pela
+    /// configuração do Windows (AppsUseLightTheme).
+    /// </summary>
+    public static bool EffectiveLight => EffectiveTheme == ElementTheme.Light;
+
+    public static ElementTheme EffectiveTheme => App.Settings.Theme switch
+    {
+        "Claro" => ElementTheme.Light,
+        "Escuro" => ElementTheme.Dark,
+        _ => SystemIsLight() ? ElementTheme.Light : ElementTheme.Dark
+    };
+
+    public static bool SystemIsLight()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            var valor = key?.GetValue("AppsUseLightTheme");
+            return valor is int i && i != 0;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Aplica o tema na raiz da janela. Precisa rodar ANTES de Activate: aplicar depois pisca.
+    /// </summary>
+    public static void ApplyTheme(FrameworkElement? root)
+    {
+        if (root is null) return;
+        try
+        {
+            var tema = EffectiveTheme;
+            root.RequestedTheme = tema;
+            AppPaths.Log($"tema aplicado: {(tema == ElementTheme.Light ? "claro" : "escuro")} " +
+                         $"(preferência \"{App.Settings.Theme}\")");
+        }
+        catch (Exception ex) { AppPaths.Log("ApplyTheme: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// Barra de título / moldura da janela no tom do tema. No escuro mantém a moldura escura do
+    /// Windows 11; no claro desliga o modo escuro da moldura.
+    /// </summary>
+    public static void ApplyChrome(Window window, bool round)
+    {
+        try
+        {
+            var hwnd = Hwnd(window);
+            var escuro = EffectiveLight ? 0 : 1;
+            Native.DwmSetWindowAttribute(hwnd, Native.DWMWA_USE_IMMERSIVE_DARK_MODE, ref escuro, sizeof(int));
+            if (round)
+            {
+                var pref = Native.DWMWCP_ROUND;
+                Native.DwmSetWindowAttribute(hwnd, Native.DWMWA_WINDOW_CORNER_PREFERENCE, ref pref, sizeof(int));
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>Mantido para chamadas antigas: moldura escura fixa.</summary>
     public static void ApplyDarkChrome(Window window, bool round)
     {
         try

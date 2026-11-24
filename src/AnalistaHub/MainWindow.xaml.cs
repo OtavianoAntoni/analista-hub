@@ -36,7 +36,7 @@ public sealed partial class MainWindow : Window
         Title = "Analista Hub";
         AppWindow.Resize(new SizeInt32(1120, 760));
         CenterOnScreen();
-        UiKit.ApplyDarkChrome(this, round: false);
+        UiKit.ApplyChrome(this, round: false);
 
         // Fechar no X destrói a janela nesta versão do WinAppSDK (AppWindow.Closing não é acionado
         // nem cancelável). O app continua vivo pela janela oculta da bandeja, e qualquer ação de
@@ -47,12 +47,7 @@ public sealed partial class MainWindow : Window
         // mostrada deixa a ilha XAML sem conteúdo (janela branca). Só depois de Show + Activate.
         Activated += OnFirstActivated;
 
-        RootGrid.RequestedTheme = App.Settings.Theme switch
-        {
-            "Claro" => ElementTheme.Light,
-            "Sistema" => ElementTheme.Default,
-            _ => ElementTheme.Dark
-        };
+        UiKit.ApplyTheme(RootGrid);
 
         var icon = AppPaths.IconFile;
         if (File.Exists(icon))
@@ -188,7 +183,14 @@ public sealed partial class MainWindow : Window
         NavList.SelectedItem = items.FirstOrDefault(i => i.Title == selected) ?? items[0];
     }
 
-    private void OnNavSelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void OnNavSelectionChanged(object sender, SelectionChangedEventArgs e) => RenderSelectedPage();
+
+    /// <summary>
+    /// Desenha a página selecionada. Separado do evento porque a troca de tema precisa REDESENHAR a
+    /// página: os elementos são criados em código com a cor do tema vigente na criação, e só trocar
+    /// RequestedTheme deixava metade da tela com as cores antigas.
+    /// </summary>
+    public void RenderSelectedPage()
     {
         if (NavList.SelectedItem is not NavItem item) return;
         ContentScroll.ChangeView(null, 0, null);
@@ -201,6 +203,14 @@ public sealed partial class MainWindow : Window
             if (tool is null) ShowHome();
             else ShowTool(tool);
         }
+    }
+
+    /// <summary>Aplica a preferência de tema nesta janela e redesenha o conteúdo.</summary>
+    public void ApplyThemeNow()
+    {
+        UiKit.ApplyTheme(RootGrid);
+        UiKit.ApplyChrome(this, round: false);
+        RenderSelectedPage();
     }
 
     /// <summary>Navega para uma página por identificador (usado por --page e pelo painel).</summary>
@@ -273,19 +283,95 @@ public sealed partial class MainWindow : Window
 
     private void OnOpenHudClick(object sender, RoutedEventArgs e) => HudController.Show();
 
-    private void OnExitClick(object sender, RoutedEventArgs e) => App.ExitApp();
+    /// <summary>
+    /// UI-001: fechar pede confirmação DENTRO da janela (ContentDialog, foco travado). "Mudei de
+    /// ideia" e Esc cancelam; só "Encerrar" termina o processo (código 0).
+    /// </summary>
+    private async void OnExitClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Encerrar o Analista Hub?",
+            Content = "Isso irá encerrar a aplicação, deseja continuar?",
+            PrimaryButtonText = "Encerrar",
+            CloseButtonText = "Mudei de ideia",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = (Content as FrameworkElement)?.XamlRoot
+        };
+
+        if (Application.Current.Resources.TryGetValue("HubDangerButton", out var danger) && danger is Style dangerStyle)
+            dialog.PrimaryButtonStyle = dangerStyle;
+
+        ContentDialogResult resultado;
+        try { resultado = await dialog.ShowAsync(); }
+        catch (Exception ex) { AppPaths.Log("confirmar saída: " + ex.Message); return; }
+
+        if (resultado == ContentDialogResult.Primary)
+        {
+            AppPaths.Log("saída confirmada pelo usuário");
+            App.ExitApp();
+        }
+        else AppPaths.Log("saída cancelada pelo usuário");
+    }
 
     private void OnMinimizeClick(object sender, RoutedEventArgs e)
     {
-        try { ((Microsoft.UI.Windowing.OverlappedPresenter)AppWindow.Presenter).Minimize(); }
+        // UI-002: minimizar = esconder para a bandeja, processo vivo. Não chamamos Minimize() para
+        // não ocupar a barra de tarefas, e não fechamos a janela: fechar de verdade desmonta o host
+        // XAML e a próxima abertura viria em branco (corrigido no 2.1).
+        try
+        {
+            AppWindow.Hide();
+            AppPaths.Log("janela principal: escondida na bandeja (processo segue vivo)");
+        }
         catch (Exception ex) { AppPaths.Log("minimizar: " + ex.Message); }
+    }
+
+    // ================================================================== captura de atalho (SQ-003)
+
+    private static bool TeclaDown(VirtualKey key) =>
+        InputKeyboardSource.GetKeyStateForCurrentThread(key).HasFlag(CoreVirtualKeyStates.Down);
+
+    private static bool EhModificador(VirtualKey key) => key is VirtualKey.Control or VirtualKey.Shift
+        or VirtualKey.Menu or VirtualKey.LeftWindows or VirtualKey.RightWindows;
+
+    private static string NomeTecla(VirtualKey key)
+    {
+        var v = (int)key;
+        if (v is >= 0x30 and <= 0x39) return ((char)v).ToString();
+        if (v is >= 0x41 and <= 0x5A) return ((char)v).ToString();
+        if (v is >= 0x70 and <= 0x87) return "F" + (v - 0x6F);
+        return key switch
+        {
+            VirtualKey.Space => "Space",
+            VirtualKey.Enter => "Enter",
+            VirtualKey.Tab => "Tab",
+            VirtualKey.Insert => "Insert",
+            VirtualKey.Delete => "Delete",
+            VirtualKey.Home => "Home",
+            VirtualKey.End => "End",
+            VirtualKey.PageUp => "PageUp",
+            VirtualKey.PageDown => "PageDown",
+            VirtualKey.Left => "Left",
+            VirtualKey.Up => "Up",
+            VirtualKey.Right => "Right",
+            VirtualKey.Down => "Down",
+            _ => key.ToString()
+        };
+    }
+
+    /// <summary>Muda a cor de um texto de status sem depender de estilo.</summary>
+    private static void PintarStatus(TextBlock alvo, string texto, bool erro)
+    {
+        alvo.Text = texto;
+        alvo.Foreground = new SolidColorBrush(erro ? UiKit.Bad : UiKit.DimText);
     }
 
     // ================================================================== widgets
     private Border Card(UIElement child, Thickness? padding = null) => new()
     {
-        Background = (Brush)Application.Current.Resources["HubCardBackground"],
-        BorderBrush = (Brush)Application.Current.Resources["HubStroke"],
+        Background = new SolidColorBrush(UiKit.Card),
+        BorderBrush = new SolidColorBrush(UiKit.CardStroke),
         BorderThickness = new Thickness(1),
         CornerRadius = new CornerRadius(10),
         Padding = padding ?? new Thickness(18, 16, 18, 16),
@@ -325,7 +411,7 @@ public sealed partial class MainWindow : Window
         Text = text,
         TextWrapping = TextWrapping.Wrap,
         FontSize = 12,
-        Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(170, 255, 255, 255))
+        Foreground = new SolidColorBrush(UiKit.DimText)
     };
 
     private static StackPanel KeyValue(string key, string value)
@@ -366,8 +452,6 @@ public sealed partial class MainWindow : Window
             var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             titleRow.Children.Add(ToolIcons.Create(tool, 18, 14));
             titleRow.Children.Add(new TextBlock { Text = tool.Name, FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            if (!string.IsNullOrWhiteSpace(tool.Trigger))
-                titleRow.Children.Add(new TextBlock { Text = SettingsService.TriggerFor(tool), FontFamily = new FontFamily("Consolas"), FontSize = 12, Opacity = 0.6, VerticalAlignment = VerticalAlignment.Center });
             left.Children.Add(titleRow);
             left.Children.Add(Muted(tool.IsBroken ? "Manifesto com problema: " + tool.LoadError : tool.Description));
             row.Children.Add(left);
@@ -420,30 +504,30 @@ public sealed partial class MainWindow : Window
 
         if (reachable == false)
         {
-            color = Windows.UI.Color.FromArgb(255, 232, 122, 122);          // vermelho
+            color = UiKit.Bad;          // vermelho
             tooltip = $"Sem resposta de {tool.Network!.Host}:{tool.Network.Port} — verifique a VPN";
         }
         else if (auth.State == AuthState.Refused)
         {
-            color = Windows.UI.Color.FromArgb(255, 232, 184, 75);           // amarelo
+            color = UiKit.Warn;           // amarelo
             tooltip = "Autenticação recusada pelo serviço: " + auth.Message +
                       " — corrija as credenciais na aba da ferramenta";
         }
         else if (requiresCredentials && !creds.Complete)
         {
-            color = Windows.UI.Color.FromArgb(255, 232, 184, 75);           // amarelo
+            color = UiKit.Warn;           // amarelo
             tooltip = "Credenciais incompletas: faltando " + string.Join(", ", creds.Missing);
         }
         else if (reachable == true && auth.State != AuthState.Unreachable)
         {
-            color = Windows.UI.Color.FromArgb(255, 108, 214, 138);          // verde
+            color = UiKit.Ok;          // verde
             tooltip = auth.State == AuthState.Ok
                 ? $"{tool.Network?.Label ?? "serviço"} respondeu · credenciais aceitas ({auth.When:HH:mm})"
                 : $"{tool.Network?.Label ?? "serviço"} respondeu · credenciais não verificadas ainda";
         }
         else
         {
-            color = Windows.UI.Color.FromArgb(255, 138, 138, 138);          // cinza
+            color = UiKit.Unknown;          // cinza
             tooltip = "Status não verificado";
         }
 
@@ -480,11 +564,11 @@ public sealed partial class MainWindow : Window
             if (tool.Network is not null && !result.TimedOut &&
                 !await Probes.CheckTcpAsync(tool.Network.Host, tool.Network.Port, 2500))
                 detail = "Sem conexão com o servidor. Verifique a VPN e tente novamente.";
-            ToastController.ShowMessage(tool.Name, "Falhou", detail);
+            ToastController.ShowFailure(tool, App.TituloFalha, detail);
         }
 
         HistoryStore.Append(new HistoryEntry(DateTime.Now, tool.Id, tool.Name, "teste pelo painel",
-            result.Ok, result.Elapsed.TotalSeconds, result.Ok ? result.Value : result.Detail));
+            result.Ok, result.Elapsed.TotalSeconds, result.Ok ? result.Value : result.Detail, "painel"));
     }
 
     // ================================================================== ferramenta
@@ -532,8 +616,7 @@ public sealed partial class MainWindow : Window
 
         // 2 — como executar
         var how = new StackPanel { Spacing = 8 };
-        how.Children.Add(KeyValue("Gatilho", string.IsNullOrWhiteSpace(tool.Trigger) ? "sem gatilho" : tool.Trigger));
-        how.Children.Add(KeyValue("Busca / atalho", $"{App.Settings.Hotkey} → digite o nome ou o gatilho → Enter"));
+        how.Children.Add(KeyValue("Busca / atalho", $"{App.Settings.Hotkey} → digite o nome da ferramenta → Enter"));
         how.Children.Add(KeyValue("Exemplo", tool.Examples.Count > 0 ? string.Join("   ·   ", tool.Examples) : "—"));
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
         if (tool.IsDataset)
@@ -591,105 +674,8 @@ public sealed partial class MainWindow : Window
         // 3 — configurações e credenciais
         var requirements = new StackPanel { Spacing = 12 };
 
-        // 3a — gatilho da ferramenta: mesmo padrão de interação do atalho global
-        // (armar → capturar o que o usuário digita → validar pela regra única → gravar)
-        var triggerCaption = new TextBlock { Text = "Gatilho desta ferramenta", FontSize = 12, Opacity = 0.75 };
-        var triggerStatus = Muted("");
-        var triggerFrame = new Border
-        {
-            BorderThickness = new Thickness(1.5),
-            CornerRadius = new CornerRadius(6),
-            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(60, 255, 255, 255)),
-            Width = 220,
-            Child = new TextBox
-            {
-                Text = SettingsService.TriggerFor(tool),
-                PlaceholderText = ":mkt",
-                FontFamily = new FontFamily("Consolas"),
-                BorderThickness = new Thickness(0),
-                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0))
-            }
-        };
-        var triggerBox = (TextBox)triggerFrame.Child;
-        var armTrigger = new Button { Content = "Definir gatilho" };
-        var triggerArmed = false;
-
-        void PaintTrigger(bool? ok)
-        {
-            triggerFrame.BorderBrush = ok switch
-            {
-                true => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 108, 214, 138)),   // verde
-                false => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 232, 184, 75)),  // amarelo
-                null => new SolidColorBrush(Windows.UI.Color.FromArgb(60, 255, 255, 255))
-            };
-        }
-
-        void CommitTrigger()
-        {
-            var typed = triggerBox.Text;
-            var problem = TriggerPolicy.Validate(typed, App.Catalog, tool.Id);
-            if (problem is not null)
-            {
-                PaintTrigger(false);
-                triggerStatus.Text = "recusado: " + problem;
-                return;
-            }
-
-            var normalized = TriggerPolicy.Normalize(typed);
-            SettingsService.SetTrigger(tool, normalized);
-            triggerBox.Text = SettingsService.TriggerFor(tool);
-            PaintTrigger(true);
-            triggerStatus.Text = "— ok · gatilho ativo " + SettingsService.TriggerFor(tool);
-            AppPaths.Log($"gatilho de {tool.Id} definido: {SettingsService.TriggerFor(tool)}");
-        }
-
-        void SetTriggerArmed(bool on)
-        {
-            triggerArmed = on;
-            armTrigger.Content = on ? "digite o gatilho…" : "Definir gatilho";
-            if (!on) return;
-            PaintTrigger(null);
-            triggerStatus.Text = "captura armada — digite o gatilho e pressione Enter";
-            triggerBox.Focus(FocusState.Programmatic);
-            triggerBox.SelectAll();
-        }
-
-        armTrigger.Click += (_, _) => SetTriggerArmed(true);
-
-        triggerBox.KeyDown += (_, e) =>
-        {
-            if (!triggerArmed) return;
-            if (e.Key == VirtualKey.Escape)
-            {
-                e.Handled = true;
-                triggerBox.Text = SettingsService.TriggerFor(tool);
-                SetTriggerArmed(false);
-                triggerStatus.Text = "captura cancelada";
-                PaintTrigger(null);
-                return;
-            }
-            if (e.Key == VirtualKey.Enter)
-            {
-                e.Handled = true;
-                SetTriggerArmed(false);
-                CommitTrigger();
-            }
-        };
-
-        triggerBox.LostFocus += (_, _) =>
-        {
-            if (!triggerArmed) return;
-            SetTriggerArmed(false);
-            CommitTrigger();
-        };
-
-        var triggerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Bottom };
-        triggerRow.Children.Add(triggerFrame);
-        triggerRow.Children.Add(armTrigger);
-        requirements.Children.Add(triggerCaption);
-        requirements.Children.Add(triggerRow);
-        requirements.Children.Add(triggerStatus);
-        requirements.Children.Add(Muted("Mesma regra para toda ferramenta: começa com ':', minúsculas, até 32 caracteres e único no catálogo. Aparece na busca do HUD e nos cartões."));
+        // 3a — (o gatilho ":mkt" que ficava aqui saiu no 2.2.1: a invocação é pelo nome na busca ou
+        // pelo atalho de teclado da ferramenta. Ver docs/REGRAS-DE-FERRAMENTA.md, R1.)
 
         // 3b — campos de entrada (entrada da consulta)
         if (tool.Inputs.Count > 0)
@@ -723,9 +709,9 @@ public sealed partial class MainWindow : Window
             var validating = false;
             Microsoft.UI.Dispatching.DispatcherQueueTimer? debounce = null;
 
-            var neutral = Windows.UI.Color.FromArgb(60, 255, 255, 255);
-            var green = Windows.UI.Color.FromArgb(255, 108, 214, 138);
-            var amber = Windows.UI.Color.FromArgb(255, 232, 184, 75);
+            var neutral = UiKit.SubtleStroke;
+            var green = UiKit.Ok;
+            var amber = UiKit.Warn;
 
             void Paint(AuthState state, string message = "")
             {
@@ -749,7 +735,7 @@ public sealed partial class MainWindow : Window
                     {
                         AuthState.Ok => green,
                         AuthState.Refused => amber,
-                        _ => Windows.UI.Color.FromArgb(170, 255, 255, 255)
+                        _ => UiKit.DimText
                     });
                 }
 
@@ -815,7 +801,7 @@ public sealed partial class MainWindow : Window
                     Text = "—",
                     FontSize = 12,
                     VerticalAlignment = VerticalAlignment.Center,
-                    Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(170, 255, 255, 255))
+                    Foreground = new SolidColorBrush(UiKit.DimText)
                 };
                 header.Children.Add(fieldStatus);
 
@@ -924,6 +910,165 @@ public sealed partial class MainWindow : Window
         }
 
         if (!string.IsNullOrWhiteSpace(tool.Notes)) requirements.Children.Add(Muted(tool.Notes));
+        // CFG-001: ocultar da busca rápida (a ferramenta continua no menu lateral e na bandeja)
+        var visibilityPanel = new StackPanel { Spacing = 8 };
+        var hideToggle = new ToggleSwitch
+        {
+            Header = "Ocultar ferramenta",
+            IsOn = App.Settings.HiddenTools.Contains(tool.Id),
+            OnContent = "oculta da busca",
+            OffContent = "aparece na busca"
+        };
+        hideToggle.Toggled += (_, _) =>
+        {
+            var ocultas = App.Settings.HiddenTools;
+            if (hideToggle.IsOn)
+            {
+                if (!ocultas.Contains(tool.Id)) ocultas.Add(tool.Id);
+            }
+            else ocultas.Remove(tool.Id);
+
+            SettingsService.Save();
+            AppPaths.Log($"ferramenta {tool.Id}: {(hideToggle.IsOn ? "oculta da busca" : "visível na busca")}");
+        };
+        visibilityPanel.Children.Add(hideToggle);
+        visibilityPanel.Children.Add(Muted(
+            "Remove a ferramenta da busca rápida. Ela continua no menu ao lado e no menu do ícone da bandeja."));
+        AddBlock("Visibilidade", visibilityPanel);
+
+        // SQ-003: atalho global só desta ferramenta (não abre a busca)
+        var atalhoPanel = new StackPanel { Spacing = 8 };
+        var atalhoBox = new TextBox
+        {
+            IsReadOnly = true,
+            Width = 300,
+            Text = App.Settings.ToolHotkeys.TryGetValue(tool.Id, out var atalhoGravado) ? atalhoGravado : "",
+            PlaceholderText = "sem atalho",
+            FontFamily = new FontFamily("Consolas")
+        };
+        var atalhoBtn = new Button { Content = "Definir atalho" };
+        var atalhoLimpar = new Button { Content = "Remover" };
+        var atalhoStatus = Muted("");
+        var armado = false;
+
+        void MostrarEstado()
+        {
+            if (App.HotkeyProblems.TryGetValue(tool.Id, out var problema))
+                PintarStatus(atalhoStatus, problema, erro: true);
+            else if (string.IsNullOrWhiteSpace(atalhoBox.Text))
+                PintarStatus(atalhoStatus, "sem atalho global — a ferramenta só abre pela busca ou pelo menu", erro: false);
+            else
+                PintarStatus(atalhoStatus, $"ativo: {atalhoBox.Text}", erro: false);
+        }
+
+        void Capturar(object? s, KeyRoutedEventArgs e)
+        {
+            if (!armado) return;
+            var tecla = e.OriginalKey;
+            if (tecla == VirtualKey.Escape)
+            {
+                armado = false;
+                atalhoBtn.Content = "Definir atalho";
+                PintarStatus(atalhoStatus, "captura cancelada", erro: false);
+                e.Handled = true;
+                return;
+            }
+            if (EhModificador(tecla)) return;          // espera a tecla "de verdade"
+
+            e.Handled = true;
+
+            var mods = new List<string>();
+            if (TeclaDown(VirtualKey.Control)) mods.Add("Ctrl");
+            if (TeclaDown(VirtualKey.Menu)) mods.Add("Alt");
+            if (TeclaDown(VirtualKey.Shift)) mods.Add("Shift");
+            if (TeclaDown(VirtualKey.LeftWindows) || TeclaDown(VirtualKey.RightWindows)) mods.Add("Win");
+
+            if (mods.Count == 0)
+            {
+                PintarStatus(atalhoStatus, "use pelo menos um modificador (Ctrl, Alt, Shift ou Win)", erro: true);
+                return;
+            }
+
+            var combo = string.Join("+", mods.Append(NomeTecla(tecla)));
+            armado = false;
+            atalhoBtn.Content = "Definir atalho";
+
+            if (App.ApplyToolHotkey(tool.Id, combo, out var erro))
+            {
+                atalhoBox.Text = combo;
+                PintarStatus(atalhoStatus, $"registrado: {combo}", erro: false);
+            }
+            else PintarStatus(atalhoStatus, erro, erro: true);
+        }
+
+        atalhoBtn.Click += (_, _) =>
+        {
+            armado = true;
+            atalhoBtn.Content = "pressione a combinação… (Esc cancela)";
+            PintarStatus(atalhoStatus, "captura armada — pressione a combinação agora", erro: false);
+            atalhoBox.Focus(FocusState.Programmatic);
+        };
+
+        atalhoLimpar.Click += (_, _) =>
+        {
+            if (App.ApplyToolHotkey(tool.Id, "", out var erro))
+            {
+                atalhoBox.Text = "";
+                MostrarEstado();
+            }
+            else PintarStatus(atalhoStatus, erro, erro: true);
+        };
+
+        ContentPanel.KeyDown += Capturar;
+
+        atalhoPanel.Children.Add(new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Children = { atalhoBox, atalhoBtn, atalhoLimpar }
+        });
+        atalhoPanel.Children.Add(atalhoStatus);
+        atalhoPanel.Children.Add(Muted(
+            "Atalho global desta ferramenta: dispara sem abrir a busca. O que acontece ao acionar está em " +
+            "«Comportamento do atalho», logo abaixo."));
+        AddBlock("Atalho global", atalhoPanel);
+        MostrarEstado();
+
+        // CFG-003: o que o atalho faz quando é acionado — por ferramenta, com padrão explícito
+        if (!tool.IsDataset && tool.Inputs.Count > 0)
+        {
+            var comportamento = new StackPanel { Spacing = 6 };
+            var atual = SettingsService.ShortcutBehaviorFor(tool.Id);
+            foreach (var (valor, rotulo, descricao) in new[]
+                     {
+                         ("ask", "Aguardar input (padrão)",
+                             "abre a ferramenta com o primeiro campo em foco para digitar ou colar"),
+                         ("consult", "Consultar direto",
+                             "consulta na hora, com o que estiver na área de transferência naquele momento")
+                     })
+            {
+                var rb = new RadioButton
+                {
+                    Content = $"{rotulo} — {descricao}",
+                    GroupName = "atalho-" + tool.Id,
+                    IsChecked = string.Equals(atual, valor, StringComparison.OrdinalIgnoreCase),
+                    FontSize = 13
+                };
+                var capturado = valor;
+                rb.Checked += (_, _) =>
+                {
+                    SettingsService.SetShortcutBehavior(tool.Id, capturado);
+                    AppPaths.Log($"ferramenta {tool.Id}: comportamento do atalho = {capturado}");
+                };
+                comportamento.Children.Add(rb);
+            }
+
+            comportamento.Children.Add(Muted(
+                "Em «Consultar direto», área de transferência vazia ou valor inválido cai para «Aguardar " +
+                "input», com um único aviso dizendo o motivo."));
+            AddBlock("Comportamento do atalho", comportamento);
+        }
+
         AddBlock("Configurações e credenciais", requirements);
 
         // 4 — apresentação do resultado
@@ -1206,16 +1351,13 @@ public sealed partial class MainWindow : Window
             {
                 App.Settings.Theme = theme;
                 SettingsService.Save();
-                RootGrid.RequestedTheme = theme switch
-                {
-                    "Claro" => ElementTheme.Light,
-                    "Sistema" => ElementTheme.Default,
-                    _ => ElementTheme.Dark
-                };
+
+                // Troca completa (janela + página + janelas flutuantes) fora deste evento
+                ThemeService.Apply();
             }
         };
         themePanel.Children.Add(themeCombo);
-        themePanel.Children.Add(Muted("O tema vale para as janelas abertas agora; o HUD e o aviso seguem o sistema."));
+        themePanel.Children.Add(Muted("O tema vale para todas as janelas do HUB (principal, busca rápida, aviso e consulta)."));
         AddBlock("Aparência", themePanel);
 
         // dados e ferramentas
@@ -1270,10 +1412,66 @@ public sealed partial class MainWindow : Window
             SettingsService.Save();
         };
         hudPanel.Children.Add(countToggle);
+
+        // SQ-002: fechar ao clicar fora (padrão ligado)
+        var outsideToggle = new ToggleSwitch
+        {
+            Header = "Fechar a busca ao clicar fora",
+            IsOn = App.Settings.HudCloseOnClickOutside,
+            OnContent = "fecha",
+            OffContent = "continua aberta"
+        };
+        outsideToggle.Toggled += (_, _) =>
+        {
+            App.Settings.HudCloseOnClickOutside = outsideToggle.IsOn;
+            SettingsService.Save();
+        };
+        hudPanel.Children.Add(outsideToggle);
         hudPanel.Children.Add(Muted(
             "Vale para o rodapé da busca rápida (Ctrl+Alt+Space). A contagem continua aparecendo quando " +
             "nenhuma ferramenta é encontrada — ali o número é o próprio aviso."));
         AddBlock("Busca rápida", hudPanel);
+
+        // ping do destino (NET-001): espera entre a última tecla e o ping, e timeout do pacote
+        var pingPanel = new StackPanel { Spacing = 8 };
+        var pingRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        var debounceBox = new NumberBox
+        {
+            Header = "Espera depois da última tecla (ms)",
+            Value = App.Settings.PingDebounceMs,
+            Minimum = 100,
+            Maximum = 2000,
+            SmallChange = 50,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+            Width = 230
+        };
+        var pingTimeoutBox = new NumberBox
+        {
+            Header = "Tempo máximo por pacote (ms)",
+            Value = App.Settings.PingTimeoutMs,
+            Minimum = 200,
+            Maximum = 5000,
+            SmallChange = 100,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+            Width = 210
+        };
+        var savePing = new Button { Content = "Salvar", VerticalAlignment = VerticalAlignment.Bottom };
+        savePing.Click += (_, _) =>
+        {
+            App.Settings.PingDebounceMs = (int)Math.Clamp(
+                double.IsNaN(debounceBox.Value) ? 400 : debounceBox.Value, 100, 2000);
+            App.Settings.PingTimeoutMs = (int)Math.Clamp(
+                double.IsNaN(pingTimeoutBox.Value) ? 1000 : pingTimeoutBox.Value, 200, 5000);
+            SettingsService.Save();
+        };
+        pingRow.Children.Add(debounceBox);
+        pingRow.Children.Add(pingTimeoutBox);
+        pingRow.Children.Add(savePing);
+        pingPanel.Children.Add(pingRow);
+        pingPanel.Children.Add(Muted(
+            "Vale para campos de IP que declaram ping (ex.: :mkt). Cada consulta admite até 100 pings; " +
+            "reabra a ferramenta para reiniciar a contagem."));
+        AddBlock("Ping do destino", pingPanel);
 
         // atualizações
         var updatePanel = new StackPanel { Spacing = 8 };

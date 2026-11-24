@@ -1,6 +1,6 @@
 <#
   mkt_serial.ps1 - Consulta o Serial (SN) de uma RB MikroTik no inventario
-                   "Inventário" (http://10.0.0.1:3113) a partir do IP.
+                   "Inventário" (http://<host>:<porta>) a partir do IP.
 
   Modos (-Mode):
     type       -> imprime o resultado no stdout; o Espanso digita no campo. USADO pelo :mkt.
@@ -18,7 +18,7 @@
 [CmdletBinding()]
 param(
     [string]$Ip = '',
-    [ValidateSet('clipboard', 'type', 'popup')][string]$Mode = 'clipboard',
+    [ValidateSet('clipboard', 'type', 'popup', 'hub')][string]$Mode = 'clipboard',
     [string]$User = '',
     [string]$Passw = '',
     [switch]$NoCache,
@@ -81,7 +81,10 @@ if ($PopupB64) {
 # ------------------------------------------------------------------ utilidades
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TokenFile = Join-Path $ScriptDir 'mkt_serial_token.json'
-$ApiPort   = '3113'
+# Endereço do inventário vem de fora (config.local.json -> hub -> ambiente). Nada fixo aqui: o
+# repositório é público e o endereço muda por instalação.
+$ApiHost = $env:ANALISTAHUB_HOST
+$ApiPort = if ($env:ANALISTAHUB_PORT) { $env:ANALISTAHUB_PORT } else { '3113' }
 # Caminho do cofre NÃO fica no código (o repositório é público). Quem chama informa, se quiser:
 #   $env:ANALISTAHUB_COFRE = 'C:\...\credenciais.md'
 # O Analista Hub não usa cofre: manda usuário e senha por ANALISTAHUB_USER / ANALISTAHUB_PASS.
@@ -167,7 +170,13 @@ function Save-Token([string]$token) {
 }
 
 function Invoke-Api([string]$path, $body, [string]$token, [int]$timeout = 8) {
-    $url = 'http://10.0.0.1:' + $ApiPort + $path
+    if ([string]::IsNullOrWhiteSpace($ApiHost)) {
+        Finish 'ERROR' '' ("Endereço do inventário não configurado" +
+            "`nAbra o Analista Hub > Configurações > Configuração local e preencha 'mkt-serial.host'." +
+            "`nArquivo: " + (Join-Path $env:LOCALAPPDATA 'AnalistaHub\config.local.json'))
+        exit 1
+    }
+    $url = 'http://' + $ApiHost + ':' + $ApiPort + $path
     $json = ($body | ConvertTo-Json -Compress)
     $headers = @{}
     if ($token) { $headers['Authorization'] = 'Bearer ' + $token }
@@ -206,23 +215,41 @@ if (-not $rawIp -or -not $rawIp.Trim() -or $rawIp.Trim() -eq '-') { $rawIp = Get
 $rawIp = $rawIp.Trim()
 $ipShow = if ($rawIp) { $rawIp } else { '(vazio)' }
 
+# Copia para a area de transferencia sem derrubar a ferramenta: sessao bloqueada, area de
+# transferencia em uso por outro processo ou modo sem desktop nao podem virar erro do usuario.
+function Copy-Text([string]$text) {
+    try { Set-Clipboard -Value $text -ErrorAction Stop } catch { }
+}
+
 function Finish([string]$status, [string]$text, [string]$detail) {
     switch ($Mode) {
+        'hub' {
+            # contrato do Analista Hub: JSON no stdout, sem popup e sem clipboard (quem copia e
+            # quem mostra o aviso e o HUB, uma vez por consulta).
+            #   status ok    -> valor valido; "0" e RESPOSTA, nao erro
+            #   status error -> falha de verdade; detail diz o motivo
+            $payload = [ordered]@{
+                status = if ($status -eq 'OK') { 'ok' } else { 'error' }
+                value  = $text
+                detail = $detail
+            }
+            [Console]::Out.Write(($payload | ConvertTo-Json -Compress))
+        }
         'type' {
             # o stdout vira a substituicao do Espanso ({{out}}); nada de lixo no campo
             if ($status -eq 'OK') {
                 [Console]::Out.Write($text)
-                Set-Clipboard -Value $text
+                Copy-Text $text
             } else {
                 Show-Popup ("MKT Serial`n" + $detail + "`n`nIP  " + $ipShow)
             }
         }
         'clipboard' {
-            if ($status -eq 'OK') { Set-Clipboard -Value $text }
+            if ($status -eq 'OK') { Copy-Text $text }
             elseif ($detail) { Show-Popup ("MKT Serial`n" + $detail + "`n`nIP  " + $ipShow) }
         }
         'popup' {
-            if ($status -eq 'OK') { Set-Clipboard -Value $text }
+            if ($status -eq 'OK') { Copy-Text $text }
             $body = if ($status -eq 'OK') { "MKT Serial`n" + $text + "`n`nIP  " + $ipShow + "`n(copiado para o clipboard)" }
                     else { "MKT Serial`n" + $detail + "`n`nIP  " + $ipShow }
             Show-Popup $body
@@ -310,8 +337,8 @@ if ($items.Count -gt 0) {
 }
 
 if (-not $sn) {
-    Write-Log "IP $ip sem SN (retorna 0)"
-    Finish 'OK' '0' ''
+    Write-Log "IP $ip sem SN"
+    Finish 'OK' '0' "$ip sem SN"
 }
 
 $out = $sn + '1'

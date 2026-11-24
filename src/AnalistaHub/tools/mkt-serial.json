@@ -4,17 +4,17 @@
   "category": "MikroTik",
   "description": "Consulta o serial (SN) de uma RB no inventário e devolve SN+1.",
   "longDescription": "Lê o IP de uma RB MikroTik (digitado ou copiado para a área de transferência), autentica no inventário e devolve o serial cadastrado com o sufixo \"1\". Se o IP não estiver no inventário, devolve 0 — e 0 é resposta, não erro. Falha de rede, login ou servidor nunca vira 0: nesse caso o valor anterior da área de transferência é preservado e o motivo aparece na tela.",
-  "trigger": ":mkt",
   "icon": "\uE968",
   "script": "mkt_serial.ps1",
   "interpreter": "powershell",
-  "modeArgs": [ "-Mode", "type" ],
+  "modeArgs": [ "-Mode", "hub" ],
   "inputs": [
     {
       "key": "ip",
       "label": "IP da RB",
       "arg": "-Ip",
       "type": "ip",
+      "ping": true,
       "required": false,
       "emptyUsesClipboard": true,
       "placeholder": "10.0.0.1",
@@ -66,6 +66,5 @@
   "timeoutSeconds": 14,
   "logFile": "%TEMP%/mkt_serial.log",
   "examples": [ "10.0.0.1", "10.0.0.1/32" ],
-  "notes": "Token JWT fica em cache por 45 min ao lado do script. Com o token vencido o script refaz o login e repete a consulta uma vez, sozinho.",
-  "legacyErrorPopup": true
+  "notes": "Token JWT fica em cache por 45 min ao lado do script. Com o token vencido o script refaz o login e repete a consulta uma vez, sozinho."
 }

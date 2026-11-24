@@ -4,13 +4,12 @@
   "category": "Rede",
   "description": "Resolve o fabricante (OUI) de um MAC pela base do api.macvendors.com.",
   "longDescription": "Recebe um MAC (com ou sem separador) e devolve o fabricante dono do prefixo de 6 dígitos. MACs localmente administrados — os aleatórios de celular e de Wi-Fi privado — não têm fabricante na base e são recusados com explicação, em vez de virarem erro genérico. As consultas ficam em cache local, o que evita o limite de requisições da API.",
-  "trigger": ":macv",
   "icon": "\uE701",
   "script": "mac_vendor.ps1",
   "interpreter": "powershell",
   "modeArgs": [
     "-Mode",
-    "type"
+    "hub"
   ],
   "inputs": [
     {
@@ -47,7 +46,6 @@
     "001a2b"
   ],
   "notes": "Existe limite de requisições por minuto na API pública; o cache local evita a maior parte delas.",
-  "legacyErrorPopup": true,
   "stdoutErrorPatterns": [
     "^MAC invalido",
     "^Endereco localmente administrado",

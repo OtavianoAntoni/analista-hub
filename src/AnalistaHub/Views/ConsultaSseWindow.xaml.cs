@@ -79,7 +79,7 @@ public sealed partial class ConsultaSseWindow : Window
         Title = "Analista Hub — Consulta SSE";
         UiKit.MakeHudWindow(this);
         UiKit.TryMica(this);
-        RootGrid.RequestedTheme = ElementTheme.Dark;
+        UiKit.ApplyTheme(RootGrid);
 
         ResultsList.ItemsSource = _rows;
         SearchBox.TextChanged += (_, _) => Refresh();
@@ -117,6 +117,15 @@ public sealed partial class ConsultaSseWindow : Window
     }
 
     // ------------------------------------------------------------------ ciclo de vida
+    /// <summary>Termo digitado agora (usado ao recriar o painel na troca de tema).</summary>
+    public string CurrentQuery => SearchBox.Text;
+
+    /// <summary>Painel está visível?</summary>
+    public bool Visible => AppWindow.IsVisible;
+
+    /// <summary>Reaplica o tema no painel.</summary>
+    public void ApplyThemeNow() => UiKit.ApplyTheme(RootGrid);
+
     public void ShowPanel(string? query = null)
     {
         try
@@ -281,10 +290,24 @@ public sealed partial class ConsultaSseWindow : Window
     }
 }
 
-/// <summary>Instância única do painel — aberto pelo gatilho, pelo card da ferramenta e pelo menu da bandeja.</summary>
+/// <summary>Instância única do painel — aberto pela busca, pelo card da ferramenta e pelo menu da bandeja.</summary>
 public static class SsePanelController
 {
     private static ConsultaSseWindow? _panel;
+
+    /// <summary>
+    /// Recria o painel preservando o termo digitado. Necessário na troca de tema: os cartões são
+    /// montados em código e ficariam com as cores do tema anterior.
+    /// </summary>
+    public static void Rebuild()
+    {
+        if (_panel is null) return;
+        var termo = _panel.CurrentQuery;
+        var visivel = _panel.Visible;
+        try { _panel.HidePanel(); } catch { }
+        _panel = null;
+        if (visivel) Open(termo);
+    }
 
     public static void Open(string? query = null)
     {

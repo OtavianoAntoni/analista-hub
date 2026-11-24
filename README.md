@@ -170,9 +170,9 @@ existe para o texto longo.
 
 ## Adicionar uma ferramenta (sem recompilar)
 
-**Leia `docs/REGRAS-DE-FERRAMENTA.md` antes.** As regras de gatilho, validação de credencial e status
-são permanentes e valem para toda ferramenta nova; o publish roda um gate (`--check-tools`) e falha
-se o manifesto não seguir a regra.
+**Leia `docs/REGRAS-DE-FERRAMENTA.md` antes.** As regras de invocação, validação de credencial e
+status são permanentes e valem para toda ferramenta nova; o publish roda um gate (`--check-tools`) e
+falha se o manifesto não seguir a regra.
 
 Um arquivo `.json` em `%LOCALAPPDATA%\AnalistaHub\tools\` (sobrepõe o embutido de mesmo `id`):
 
@@ -205,6 +205,9 @@ Um arquivo `.json` em `%LOCALAPPDATA%\AnalistaHub\tools\` (sobrepõe o embutido 
 }
 ```
 
+Se o campo é `type: "ip"` e você quer o **ping do destino** enquanto o analista digita, acrescente
+`"ping": true` nele (regra R14; comportamento e API em `docs/SUBFERRAMENTA-PING.md`).
+
 ### Contrato recomendado com o script
 
 `-Mode hub` — o script imprime **um** objeto JSON no stdout:
@@ -234,8 +237,9 @@ AnalistaHub.exe --test <id> [valor]
 AnalistaHub.exe --probe <id>
 AnalistaHub.exe --set-cred <id> <campo>    (valor vem do STDIN)
 AnalistaHub.exe --clear-cred <id>
-AnalistaHub.exe --set-trigger <id> :gatilho
 AnalistaHub.exe --page <id|home|settings>
+AnalistaHub.exe --ping <ip> [--count N] [--timeout ms]
+AnalistaHub.exe --ping-sim [--debounce ms]
 ```
 
 ## Aviso

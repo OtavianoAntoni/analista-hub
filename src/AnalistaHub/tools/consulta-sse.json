@@ -6,7 +6,6 @@
   "dataset": "data/sse-cidades.json",
   "description": "Sigla Anatel e estado de qualquer cidade; NM, OLT e VPN onde houver.",
   "longDescription": "Consulta por cidade, sigla Anatel ou UF. Devolve a Sigla Anatel oficial e o estado de qualquer município do Brasil (cadastro da ANATEL) e, quando a cidade tem planilha do SSE, também as redes de acesso: NM (NMS), OLT (modelo) e VPN por onde se chega aos NMEs. Uma cidade pode ter mais de uma rede — todas aparecem juntas. O botão NMs no cabeçalho oculta as informações de acesso para deixar a lista limpa, e a escolha fica gravada. Funciona sem rede, sem VPN e sem credencial: os dados são um arquivo local, carregado uma vez na abertura do aplicativo.",
-  "trigger": ":sse",
   "icon": "\uE774",
   "inputs": [],
   "output": {

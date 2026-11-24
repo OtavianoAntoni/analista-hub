@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using AnalistaHub.Models;
 using AnalistaHub.Services;
 using AnalistaHub.Views;
 
@@ -24,6 +25,30 @@ public partial class App : Application
     /// continua vivo pela bandeja, os timers rodam, mas nada renderiza). Ver SPEC §5.4.
     /// </summary>
     private static Window? _keeper;
+
+    /// <summary>
+    /// Timers dos diagnósticos de linha de comando (`--hud`, `--fill`, `--cycle`, `--submit`).
+    /// Precisam de referência forte: um DispatcherQueueTimer guardado só numa variável local pode ser
+    /// recolhido pelo GC antes do Tick — foi o que fez o `--submit` (3800 ms) não disparar em parte
+    /// das execuções, deixando a prova do SQ-004 dependente da sorte.
+    /// </summary>
+    private static readonly List<Microsoft.UI.Dispatching.DispatcherQueueTimer> DiagnosticTimers = new();
+
+    private static void After(int milliseconds, Action action)
+    {
+        if (MainWin is null) return;
+
+        var timer = MainWin.DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(milliseconds);
+        timer.IsRepeating = false;
+        timer.Tick += (_, _) =>
+        {
+            DiagnosticTimers.Remove(timer);
+            action();
+        };
+        DiagnosticTimers.Add(timer);
+        timer.Start();
+    }
 
     public App()
     {
@@ -69,6 +94,11 @@ public partial class App : Application
 
         Catalog = ToolCatalog.Load();
 
+        // Primeira execução (ou pasta de dados apagada): o arquivo de configuração local nasce com
+        // as chaves que o catálogo pediu, para o usuário só preencher — e a ferramenta já aponta o
+        // que falta em vez de falar em "erro de comunicação" (NET-003).
+        LocalConfig.EnsureTemplate(LocalConfig.Faltando);
+
         CreateKeeperWindow();
 
         MainWin = new MainWindow();
@@ -88,11 +118,15 @@ public partial class App : Application
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(MainWin);
         Hotkey = new HotkeyService(hwnd);
         Hotkey.Pressed += () => HudController.Toggle();
+        Hotkey.ToolPressed += OnToolHotkey;
         if (!Hotkey.Register(Settings.Hotkey, out var hotkeyError))
         {
             AppPaths.Log(hotkeyError);
             MainWin.SetHotkeyWarning(hotkeyError);
         }
+
+        // atalhos por ferramenta: cada um independente; recusa entra em HotkeyProblems
+        ApplyToolHotkeys();
 
         Tray = new TrayIcon("Analista Hub — clique para buscar, botão direito para abrir o menu");
         Tray.LeftClick += () => HudController.Toggle();
@@ -117,19 +151,74 @@ public partial class App : Application
             sseTimer.Start();
         }
 
+        // teste/diagnóstico: troca o tema em tempo de execução, pelo mesmo caminho do combo em
+        // Configurações — serve para provar que não é preciso reiniciar o aplicativo.
+        var temaIdx = Array.IndexOf(cliArgs, "--theme-switch");
+        if (temaIdx >= 0 && temaIdx + 1 < cliArgs.Length)
+        {
+            var alvo = cliArgs[temaIdx + 1];
+            var timer = MainWin.DispatcherQueue.CreateTimer();
+            timer.Interval = TimeSpan.FromSeconds(4);
+            timer.IsRepeating = false;
+            timer.Tick += (_, _) =>
+            {
+                App.Settings.Theme = alvo;
+                SettingsService.Save();
+                AppPaths.Log($"teste: trocando tema para {alvo} em tempo de execução");
+                ThemeService.Apply();
+            };
+            timer.Start();
+        }
+
         if (cliArgs.Contains("--hud"))
         {
             // teste/diagnóstico: abre a HUD; com um id depois da flag, já nos campos da ferramenta
             var alvo = cliArgs.SkipWhile(a => a != "--hud").Skip(1).FirstOrDefault(a => !a.StartsWith("--"));
-            var hudTimer = MainWin.DispatcherQueue.CreateTimer();
-            hudTimer.Interval = TimeSpan.FromMilliseconds(900);
-            hudTimer.IsRepeating = false;
-            hudTimer.Tick += (_, _) => HudController.Show(alvo);
-            hudTimer.Start();
+            After(900, () => HudController.Show(alvo));
+
+            // NET-001: com "--fill <valor>", o primeiro campo recebe o texto pelo MESMO caminho da
+            // digitação (TextChanged → ping). Evita teclado sintético na máquina de quem trabalha.
+            var fillIdx = Array.IndexOf(cliArgs, "--fill");
+            if (fillIdx >= 0 && fillIdx + 1 < cliArgs.Length)
+            {
+                var valor = cliArgs[fillIdx + 1];
+                After(1900, () => HudController.FillFirstField(valor));
+
+                // "--submit": executa a ferramenta pelo mesmo caminho do Enter (prova do aviso).
+                // 3800 ms = HUD (900) + 2 passos de fill (1900 + 700) + debounce (400) com folga.
+                if (cliArgs.Contains("--submit"))
+                    After(3800, () =>
+                    {
+                        AppPaths.Log("hud --submit: disparando");
+                        HudController.Submit();
+                    });
+            }
+
+            // SQ-004: "--cycle <id>" troca de ferramenta pelo mesmo caminho das setas (↑/↓) com o
+            // painel de campos aberto — prova o roteamento sem teclado sintético.
+            var cycleIdx = Array.IndexOf(cliArgs, "--cycle");
+            if (cycleIdx >= 0 && cycleIdx + 1 < cliArgs.Length)
+            {
+                var alvoCiclo = cliArgs[cycleIdx + 1];
+                After(fillIdx >= 0 ? 2600 : 1900, () => HudController.CycleTo(alvoCiclo));
+            }
         }
 
         if (cliArgs.Contains("--arm-hotkey"))
             MainWin.ArmHotkeyCapture();
+
+        // NET-004 / CFG-003: dispara o atalho de uma ferramenta pelo caminho de produção
+        // (atalho global por ferramenta), sem teclado sintético.
+        var toolHotkeyIdx = Array.IndexOf(cliArgs, "--tool-hotkey");
+        if (toolHotkeyIdx >= 0 && toolHotkeyIdx + 1 < cliArgs.Length)
+        {
+            var alvoAtalho = cliArgs[toolHotkeyIdx + 1];
+            After(1200, () =>
+            {
+                AppPaths.Log($"diagnóstico: simulando atalho da ferramenta «{alvoAtalho}»");
+                SimulateToolHotkey(alvoAtalho);
+            });
+        }
 
         if (cliArgs.Contains("--validate-once"))
         {
@@ -261,6 +350,11 @@ public partial class App : Application
 
         if (items.Count > 0) items.Add(TrayMenuItem.Separator());
 
+        items.Add(TrayMenuItem.Command("Início", () =>
+        {
+            ShowMainWindow();
+            MainWin?.NavigateTo("home");
+        }));
         items.Add(TrayMenuItem.Command("Buscar ferramenta…", () => HudController.Show()));
         items.Add(TrayMenuItem.Command("Configurações", () =>
         {
@@ -409,7 +503,180 @@ public partial class App : Application
         catch (Exception ex) { AppPaths.Log("relançar falhou: " + ex.Message); }
     }
 
-    /// <summary>Reescreve o atalho global (usado pela tela de configurações).</summary>
+    /// <summary>
+    /// Atalho de uma ferramenta acionado (SQ-003). Roda sem abrir a busca quando dá:
+    ///   • consulta por base  → abre o painel da consulta;
+    ///   • ferramenta sem campo → roda e mostra o aviso;
+    ///   • ferramenta com um campo que aceita a área de transferência → usa o valor copiado e roda;
+    ///   • caso contrário → abre a busca já nos campos da ferramenta (para digitar).
+    /// O diagnóstico `--tool-hotkey <id>` chama esse mesmo caminho por <see cref="SimulateToolHotkey"/>.
+    /// </summary>
+    public static void SimulateToolHotkey(string toolId) => OnToolHotkey(toolId);
+
+    private static async void OnToolHotkey(string toolId)
+    {
+        try
+        {
+            var tool = Catalog?.Find(toolId);
+            if (tool is null || tool.IsBroken) { AppPaths.Log($"atalho: ferramenta {toolId} indisponível"); return; }
+
+            if (tool.IsDataset) { Views.SsePanelController.Open(); return; }
+
+            if (tool.Inputs.Count == 0)
+            {
+                await RunHeadless(tool, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), "atalho/sem-campo");
+                return;
+            }
+
+            // CFG-003: o comportamento é uma preferência POR FERRAMENTA, com padrão "ask" (abrir
+            // pedindo o valor). "consult" usa o que estiver na área de transferência NO MOMENTO do
+            // atalho — nunca o valor de quando a preferência foi configurada.
+            var comportamento = SettingsService.ShortcutBehaviorFor(toolId);
+            var campoClipboard = tool.Inputs.Count == 1 && tool.Inputs[0].EmptyUsesClipboard;
+
+            if (comportamento == "consult" && campoClipboard)
+            {
+                var copiado = ClipboardService.GetText()?.Trim();
+                if (string.IsNullOrWhiteSpace(copiado))
+                {
+                    AppPaths.Log($"atalho {toolId}: «consultar direto» sem valor copiado — caindo para aguardar input");
+                    Views.HudController.Show(toolId);
+                    Views.ToastController.ShowFailure(tool, "Nada para consultar",
+                        "A área de transferência está vazia. Digite ou cole o valor no campo.");
+                    return;
+                }
+
+                // NET-004: a MESMA validação da HUD vale para o valor copiado. Sem isso o atalho
+                // mandava "999.999.999.999" para o script, que falhava por conta própria — e o
+                // analista via duas mensagens diferentes para o mesmo problema.
+                var problema = FieldValidation.Check(tool.Inputs[0], copiado);
+                if (problema is not null)
+                {
+                    AppPaths.Log($"atalho {toolId}: valor recusado — {problema}");
+
+                    // cai para "aguardar input": abre a ferramenta com o valor no campo, para
+                    // corrigir sem digitar de novo. Uma mensagem só, dizendo o que estava errado.
+                    Views.HudController.Show(toolId);
+                    Views.HudController.FillFirstField(copiado);
+                    Views.ToastController.ShowFailure(tool, TituloFalha, problema);
+                    return;
+                }
+
+                // CFG-003: dizer o que vai ser usado antes do resultado (mascarado se sensível)
+                Views.ToastController.ShowProgress(tool,
+                    $"Consultando {FieldValidation.VisibleValue(tool.Inputs[0], copiado)}…", "");
+
+                var entradas = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [tool.Inputs[0].Key] = copiado
+                };
+                await RunHeadless(tool, entradas, "atalho/consult");
+                return;
+            }
+
+            AppPaths.Log($"atalho {toolId}: aguardando input (comportamento={comportamento}) — abrindo os campos");
+            Views.HudController.Show(toolId);
+        }
+        catch (Exception ex) { AppPaths.Log("atalho da ferramenta: " + ex); }
+    }
+
+    /// <summary>Executa a ferramenta sem paleta: aviso na tela, cópia e histórico — igual à busca.</summary>
+    private static async Task RunHeadless(ToolManifest tool, IReadOnlyDictionary<string, string> entradas,
+        string origem)
+    {
+        var resultado = await ToolRunner.RunAsync(tool, entradas, CancellationToken.None);
+        var rotulo = tool.HistoryLabel(entradas);
+
+        HistoryStore.Append(new HistoryEntry(DateTime.Now, tool.Id, tool.Name, rotulo,
+            resultado.Ok, resultado.Elapsed.TotalSeconds, resultado.Ok ? resultado.Value : resultado.Detail,
+            origem));
+
+        if (resultado.Ok)
+        {
+            ClipboardService.SetText(resultado.Value);
+
+            // NET-004: o cartão já diz "copiado para a área de transferência" no contexto — repetir
+            // isso na legenda punha a mesma frase duas vezes. "0" usa a explicação do resultado.
+            Views.ToastController.ShowSuccess(tool, resultado.Value, resultado.SuccessSubtitle(tool, ""), "clipboard");
+        }
+        else
+        {
+            // NET-004: UMA mensagem, com o nome da ferramenta no topo e o motivo como legenda.
+            // Antes eram duas: o popup do script e um aviso "Não foi possível" com cara de sucesso.
+            Views.ToastController.ShowFailure(tool, TituloFalha, resultado.Detail);
+        }
+    }
+
+    /// <summary>Título único das falhas de consulta (NET-004): o motivo vai na legenda.</summary>
+    public const string TituloFalha = "Erro de consulta";
+
+    /// <summary>Combinações que o Windows recusou na última carga (ferramenta → motivo).</summary>
+    public static Dictionary<string, string> HotkeyProblems { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Registra os atalhos por ferramenta gravados em settings.json. Cada um é independente: uma
+    /// combinação recusada entra em <see cref="HotkeyProblems"/> e não derruba as outras.
+    /// </summary>
+    public static void ApplyToolHotkeys()
+    {
+        HotkeyProblems.Clear();
+        if (Hotkey is null) return;
+
+        foreach (var par in Settings.ToolHotkeys)
+        {
+            if (Catalog?.Find(par.Key) is null) continue;          // ferramenta removida
+            if (string.IsNullOrWhiteSpace(par.Value)) continue;
+
+            if (!Hotkey.RegisterTool(par.Key, par.Value, out var erro))
+                HotkeyProblems[par.Key] = erro;
+        }
+
+        if (HotkeyProblems.Count > 0)
+            AppPaths.Log("atalhos por ferramenta com problema: " +
+                         string.Join(" | ", HotkeyProblems.Select(p => $"{p.Key}: {p.Value}")));
+    }
+
+    /// <summary>
+    /// Grava e registra o atalho de uma ferramenta. Recusa com motivo quando a combinação é da busca
+    /// rápida, de outra ferramenta ou quando o Windows não libera — e não toca nos demais atalhos.
+    /// </summary>
+    public static bool ApplyToolHotkey(string toolId, string combo, out string error)
+    {
+        error = "";
+        if (Hotkey is null) { error = "Atalho global não inicializado."; return false; }
+
+        combo = (combo ?? "").Trim();
+
+        if (combo.Length == 0)
+        {
+            Hotkey.UnregisterTool(toolId);
+            Settings.ToolHotkeys.Remove(toolId);
+            SettingsService.Save();
+            HotkeyProblems.Remove(toolId);
+            AppPaths.Log($"atalho da ferramenta {toolId}: removido");
+            return true;
+        }
+
+        if (!Hotkey.RegisterTool(toolId, combo, out error))
+        {
+            HotkeyProblems[toolId] = error;
+            return false;
+        }
+
+        Settings.ToolHotkeys[toolId] = combo;
+        SettingsService.Save();
+        HotkeyProblems.Remove(toolId);
+
+        var relido = SettingsService.ReadFromDisk();
+        if (relido is null || !relido.ToolHotkeys.TryGetValue(toolId, out var gravado) ||
+            !string.Equals(gravado, combo, StringComparison.Ordinal))
+        {
+            error = $"O atalho {combo} está ativo agora, mas não consegui gravar em {AppPaths.SettingsFile}.";
+            return false;
+        }
+        return true;
+    }
+
     public static bool ApplyHotkey(string combo, out string error)
     {
         error = "";

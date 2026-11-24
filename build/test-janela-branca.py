@@ -51,11 +51,52 @@ def cores(hwnd):
     return len(set(img.getdata()))
 
 
-def alt_f4():
-    subprocess.run(
-        ["powershell", "-NoProfile", "-Command",
-         "Add-Type -AssemblyName System.Windows.Forms; [Windows.Forms.SendKeys]::SendWait('%{F4}')"],
-        timeout=40)
+def ativar(hwnd):
+    """Traz a janela para a frente sem depender de quem está em foco.
+
+    `SetForegroundWindow` sozinho é recusado pelo Windows quando quem chama não é o dono do foco;
+    anexar à thread do foreground (o mesmo truque do `UiKit.ForceForeground` do app) libera a troca.
+    """
+    fg = user32.GetForegroundWindow()
+    if fg == hwnd:
+        return True
+
+    tid_fg = user32.GetWindowThreadProcessId(fg, None)
+    tid_alvo = user32.GetWindowThreadProcessId(hwnd, None)
+    anexado = False
+    if tid_fg and tid_alvo and tid_fg != tid_alvo:
+        user32.AttachThreadInput(tid_alvo, tid_fg, True)
+        anexado = True
+    try:
+        user32.ShowWindow(hwnd, 9)          # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+        user32.BringWindowToTop(hwnd)
+    finally:
+        if anexado:
+            user32.AttachThreadInput(tid_alvo, tid_fg, False)
+
+    time.sleep(0.4)
+    return user32.GetForegroundWindow() == hwnd
+
+
+def alt_f4(janela):
+    """Pede o fechamento pelo mesmo caminho do Alt+F4 — e SÓ na janela do app.
+
+    A versão anterior enviava `SendKeys('%{F4}')` para a janela em foco, sem ativar o alvo: se o
+    dono da máquina estivesse em outro programa (o editor, o chat do agente), quem fechava era ELE.
+    Agora: ativa o alvo e, se o Windows não liberar o foco, pede o fechamento por mensagem
+    (`WM_SYSCOMMAND`/`SC_CLOSE`) — mesmo caminho que o Alt+F4 percorre, sem teclado global.
+    """
+    if ativar(janela):
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Add-Type -AssemblyName System.Windows.Forms; [Windows.Forms.SendKeys]::SendWait('%{F4}')"],
+            timeout=40)
+        return "Alt+F4"
+
+    WM_SYSCOMMAND, SC_CLOSE = 0x0112, 0xF060
+    user32.PostMessageW(janela, WM_SYSCOMMAND, SC_CLOSE, 0)
+    return "SC_CLOSE"
 
 
 def main():
@@ -78,7 +119,7 @@ def main():
     for i in range(1, ciclos + 1):
         antes = cores(janela)
 
-        alt_f4()
+        metodo = alt_f4(janela)
         time.sleep(3.0)
         sobreviveu = bool(find_main())
 
@@ -92,7 +133,7 @@ def main():
         if not ok:
             falhas += 1
 
-        print(f"ciclo {i}: inicial={antes} cores | Alt+F4 sobreviveu={sobreviveu} | "
+        print(f"ciclo {i}: inicial={antes} cores | {metodo} sobreviveu={sobreviveu} | "
               f"reaberta={depois} cores -> {'OK' if ok else 'FALHOU'}")
 
     proc.kill()

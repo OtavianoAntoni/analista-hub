@@ -23,7 +23,7 @@ public sealed partial class ToastHud : Window
         Title = "Analista Hub — resultado";
         UiKit.MakeHudWindow(this, alwaysOnTop: true, hideFromAltTab: true);
         UiKit.TryMica(this);
-        RootGrid.RequestedTheme = ElementTheme.Dark;
+        UiKit.ApplyTheme(RootGrid);
 
         RootGrid.PointerEntered += (_, _) => StopTimer();
         RootGrid.PointerExited += (_, _) => { if (!_pinned) StartTimer(_secondsLeft); };
@@ -31,18 +31,23 @@ public sealed partial class ToastHud : Window
     }
 
     public void Present(ToolManifest? tool, string value, string subtitle, string mode, bool ok,
-        string context, int seconds)
+        string context, int seconds, string pingLine = "", bool progress = false)
     {
         _value = value;
         _pinned = false;
         _secondsLeft = Math.Clamp(seconds, 4, 120);
 
-        HeaderIcon.Glyph = ok ? "\uE73E" : "\uE7BA";
+        // CFG-003: "Consultando …" usa o ícone de sincronismo, não o de sucesso nem o de alerta.
+        HeaderIcon.Glyph = progress ? "\uE895" : ok ? "\uE73E" : "\uE7BA";
         HeaderText.Text = tool?.Name ?? "Analista Hub";
         ValueText.Text = value;
         ValueText.FontSize = value.Length > 28 ? 19 : 26;
         SubtitleText.Text = subtitle;
         SubtitleText.Visibility = string.IsNullOrWhiteSpace(subtitle) ? Visibility.Collapsed : Visibility.Visible;
+
+        // NET-001: os 2 últimos retornos de ping do endereço consultado
+        PingText.Text = string.IsNullOrWhiteSpace(pingLine) ? "" : $"ping · {pingLine}";
+        PingText.Visibility = string.IsNullOrWhiteSpace(pingLine) ? Visibility.Collapsed : Visibility.Visible;
 
         var modeLabel = mode switch
         {
@@ -95,6 +100,9 @@ public sealed partial class ToastHud : Window
         _timer.Start();
     }
 
+    /// <summary>Reaplica o tema na janela de aviso.</summary>
+    public void ApplyThemeNow() => UiKit.ApplyTheme(RootGrid);
+
     private void StopTimer()
     {
         _timer?.Stop();
@@ -128,11 +136,20 @@ public static class ToastController
 {
     private static ToastHud? _toast;
 
-    public static void ShowSuccess(ToolManifest tool, string value, string subtitle, string mode)
+    /// <summary>O aviso é transitório: descartar é mais seguro do que repintar texto já criado.</summary>
+    public static void Rebuild()
+    {
+        try { _toast?.Close(); } catch { }
+        _toast = null;
+    }
+
+    public static void ShowSuccess(ToolManifest tool, string value, string subtitle, string mode,
+        string pingLine = "")
     {
         var context = string.Join(" · ", SettingsService.Current.LastInput.TryGetValue(tool.Id, out var last) ? last : "");
         _toast ??= new ToastHud();
-        _toast.Present(tool, value, subtitle, mode, true, context: "", seconds: SettingsService.Current.ToastSeconds);
+        _toast.Present(tool, value, subtitle, mode, true, context: "", seconds: SettingsService.Current.ToastSeconds,
+            pingLine: pingLine);
     }
 
     public static void ShowMessage(string title, string value, string subtitle)
@@ -140,11 +157,44 @@ public static class ToastController
         _toast ??= new ToastHud();
         _toast.Present(null, value, subtitle, "notify", true, context: "", seconds: SettingsService.Current.ToastSeconds);
     }
+
+    /// <summary>
+    /// Falha: o mesmo cartão do resultado, com ícone de alerta e o nome da ferramenta no topo.
+    /// Antes a falha ia por ShowMessage, que desenha ícone verde de "deu certo" e transforma o texto
+    /// em valor — era o aviso "Não foi possível" com cara de sucesso (NET-004).
+    /// </summary>
+    public static void ShowFailure(ToolManifest? tool, string headline, string detail)
+    {
+        _toast ??= new ToastHud();
+        _toast.Present(tool, headline, detail, "notify", false, context: "",
+            seconds: SettingsService.Current.ToastSeconds);
+    }
+
+    /// <summary>
+    /// "Consultando &lt;valor&gt;…" antes do resultado (CFG-003): o analista vê o que foi usado.
+    /// O cartão é substituído pelo resultado assim que a consulta termina.
+    /// </summary>
+    public static void ShowProgress(ToolManifest tool, string headline, string subtitle)
+    {
+        _toast ??= new ToastHud();
+        _toast.Present(tool, headline, subtitle, "notify", true, context: "",
+            seconds: SettingsService.Current.ToastSeconds, progress: true);
+    }
 }
 
 public static class HudController
 {
     private static CommandHud? _hud;
+
+    /// <summary>
+    /// A HUD é recriada na próxima abertura: os textos e dicas montados em código guardam a cor do
+    /// tema em que nasceram, então reaproveitar a janela deixaria metade com a cor antiga.
+    /// </summary>
+    public static void Rebuild()
+    {
+        try { _hud?.HideHud(); } catch { }
+        _hud = null;
+    }
 
     private static CommandHud Ensure()
     {
@@ -176,6 +226,27 @@ public static class HudController
     {
         try { Ensure().ShowHud(toolId); }
         catch (Exception ex) { AppPaths.Log("HudController.ShowTool: " + ex.Message); }
+    }
+
+    /// <summary>Diagnóstico: preenche o primeiro campo da HUD já aberta (ver `--fill`).</summary>
+    public static void FillFirstField(string value)
+    {
+        try { _hud?.FillFirstField(value); }
+        catch (Exception ex) { AppPaths.Log("HudController.FillFirstField: " + ex.Message); }
+    }
+
+    /// <summary>Diagnóstico: executa a ferramenta aberta como o Enter faria (ver `--submit`).</summary>
+    public static void Submit()
+    {
+        try { _ = _hud?.SubmitActiveAsync(); }
+        catch (Exception ex) { AppPaths.Log("HudController.Submit: " + ex.Message); }
+    }
+
+    /// <summary>Diagnóstico: cicla até a ferramenta pedida pelas mesmas setas da HUD (ver `--cycle`).</summary>
+    public static void CycleTo(string toolId)
+    {
+        try { _hud?.CycleTo(toolId); }
+        catch (Exception ex) { AppPaths.Log("HudController.CycleTo: " + ex.Message); }
     }
 
     public static void Invalidate()

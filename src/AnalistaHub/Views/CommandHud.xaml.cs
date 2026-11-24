@@ -17,7 +17,6 @@ public sealed class ToolRow
         IconVisual = ToolIcons.Create(tool, 22, 16);
         Name = tool.Name;
         Description = tool.Description;
-        Trigger = SettingsService.TriggerFor(tool);
     }
 
     public ToolManifest Tool { get; }
@@ -25,7 +24,6 @@ public sealed class ToolRow
     public FrameworkElement IconVisual { get; }
     public string Name { get; }
     public string Description { get; }
-    public string Trigger { get; }
 }
 
 public sealed partial class CommandHud : Window
@@ -36,6 +34,11 @@ public sealed partial class CommandHud : Window
     private readonly ObservableCollection<ToolRow> _rows = new();
     private readonly Dictionary<string, TextBox> _boxes = new();
     private readonly Dictionary<string, TextBlock> _hints = new();
+
+    // NET-001 — ping do destino: uma sessão por invocação (trava de 100 disparos)
+    private readonly List<PingCoordinator> _pings = new();
+    private PingSession? _pingSession;
+    private DispatcherTimer? _fillTimer;   // diagnóstico --fill com vários passos
 
     private ToolManifest? _active;
     private CancellationTokenSource? _cts;
@@ -50,7 +53,7 @@ public sealed partial class CommandHud : Window
         Title = "Analista Hub";
         UiKit.MakeHudWindow(this);
         UiKit.TryMica(this);
-        RootGrid.RequestedTheme = ElementTheme.Dark;
+        UiKit.ApplyTheme(RootGrid);
 
         ResultsList.ItemsSource = _rows;
         SearchBox.TextChanged += OnSearchTextChanged;
@@ -61,6 +64,9 @@ public sealed partial class CommandHud : Window
     }
 
     // ------------------------------------------------------------------ ciclo de vida
+    /// <summary>Reaplica o tema (preferência mudou com a HUD já aberta).</summary>
+    public void ApplyThemeNow() => UiKit.ApplyTheme(RootGrid);
+
     public void ShowHud(string? toolId)
     {
         try
@@ -108,6 +114,7 @@ public sealed partial class CommandHud : Window
         try
         {
             _cts?.Cancel();
+            DisposePings();          // nenhum ping continua depois que a HUD sai da tela
             AppWindow.Hide();
         }
         catch (Exception ex) { AppPaths.Log("HideHud: " + ex.Message); }
@@ -119,6 +126,7 @@ public sealed partial class CommandHud : Window
         {
             if (_suppressHide) return;
             if ((DateTime.UtcNow - _shownAt).TotalMilliseconds < 600) return;
+            if (!SettingsService.Current.HudCloseOnClickOutside) return;   // SQ-002: preferência do usuário
             HideHud();
             return;
         }
@@ -143,6 +151,7 @@ public sealed partial class CommandHud : Window
     {
         _cts?.Cancel();
         _cts = null;
+        DisposePings();
         _busy = false;
         _active = null;
         _boxes.Clear();
@@ -164,6 +173,7 @@ public sealed partial class CommandHud : Window
         if (_active is not null)
         {
             // voltou a digitar: sai do modo campos
+            DisposePings();
             _active = null;
             _boxes.Clear();
             _hints.Clear();
@@ -177,7 +187,11 @@ public sealed partial class CommandHud : Window
     private void RefreshResults(string query)
     {
         var previousId = (_rows.Count > 0 && ResultsList.SelectedItem is ToolRow prev) ? prev.Tool.Id : null;
-        var matches = App.Catalog.Search(query).ToList();
+
+        // CFG-001: ferramenta oculta não aparece na busca (segue no menu lateral e na bandeja)
+        var matches = App.Catalog.Search(query)
+            .Where(t => !SettingsService.Current.HiddenTools.Contains(t.Id))
+            .ToList();
 
         _rows.Clear();
         foreach (var tool in matches) _rows.Add(new ToolRow(tool));
@@ -300,6 +314,31 @@ public sealed partial class CommandHud : Window
 
     private void ShowFields(ToolManifest tool)
     {
+        DisposePings();          // trocar de ferramenta reinicia a sessão de ping (trava de 100)
+
+        // SQ-004: ferramenta de base local (Consulta SSE) ou sem campo não tem painel de campos.
+        // Antes o painel abria vazio para ela e o Enter seguinte mandava a ferramenta para o
+        // ToolRunner, que devolvia "Script da ferramenta não encontrado:" — truncado, porque o
+        // script é vazio. Agora ela fica só destacada na lista e o Enter abre pelo caminho próprio.
+        if (tool.IsDataset || tool.Inputs.Count == 0)
+        {
+            _active = null;
+            _boxes.Clear();
+            _hints.Clear();
+            FieldsPanel.Children.Clear();
+            FieldsPanel.Visibility = Visibility.Collapsed;
+            ErrorBanner.Visibility = Visibility.Collapsed;
+            StatusText.Text = "";
+            ApplySize();
+
+            // o campo que tinha o foco saiu da tela: sem devolver o foco à busca, as setas e o Enter
+            // morrem junto com o painel. Voltando para a busca, ↑↓ seguem trocando e o Enter abre.
+            SearchBox.Focus(FocusState.Programmatic);
+
+            AppPaths.Log($"hud: «{tool.Id}» fica na seleção (dataset ou sem campo) — Enter abre pelo caminho próprio");
+            return;
+        }
+
         _active = tool;
         _boxes.Clear();
         _hints.Clear();
@@ -316,8 +355,24 @@ public sealed partial class CommandHud : Window
             };
             box.KeyDown += OnFieldKeyDown;
             box.TextChanged += (_, _) => UpdateHint(field);
-            FieldsPanel.Children.Add(box);
             _boxes[field.Key] = box;
+
+            // NET-001: campo de IP declarado com "ping" ganha o retorno ICMP ao lado do valor.
+            var chip = field.Ping && field.Type == "ip" ? CreatePingLine(box, tool) : null;
+            if (chip is null)
+            {
+                FieldsPanel.Children.Add(box);
+            }
+            else
+            {
+                var linha = new Grid();
+                linha.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                linha.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                linha.Children.Add(box);
+                Grid.SetColumn(chip, 1);
+                linha.Children.Add(chip);
+                FieldsPanel.Children.Add(linha);
+            }
 
             if (field.EmptyUsesClipboard)
             {
@@ -325,7 +380,7 @@ public sealed partial class CommandHud : Window
                 {
                     FontSize = 11,
                     TextWrapping = TextWrapping.Wrap,
-                    Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(160, 255, 255, 255)),
+                    Foreground = new SolidColorBrush(UiKit.DimText),
                     Margin = new Thickness(2, -4, 0, 2)
                 };
                 FieldsPanel.Children.Add(hint);
@@ -357,9 +412,24 @@ public sealed partial class CommandHud : Window
             Text = "Enter também consulta",
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center,
-            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(140, 255, 255, 255))
+            Foreground = new SolidColorBrush(UiKit.DimText)
         });
         FieldsPanel.Children.Add(actions);
+
+        // Posição na lista + dica das setas (SQ-001): sem essa linha ninguém descobre que ↑↓ troca
+        // de ferramenta com o painel de campos aberto.
+        var lista = _rows.ToList();
+        var pos = lista.FindIndex(r => ReferenceEquals(r.Tool, tool));
+        if (pos >= 0 && lista.Count > 1)
+        {
+            FieldsPanel.Children.Insert(0, new TextBlock
+            {
+                Text = $"{pos + 1} de {lista.Count} · ↑↓ troca de ferramenta",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(UiKit.DimText),
+                Margin = new Thickness(0, 0, 0, 2)
+            });
+        }
 
         FieldsPanel.Visibility = Visibility.Visible;
 
@@ -392,12 +462,168 @@ public sealed partial class CommandHud : Window
             : "vazio usa a área de transferência";
     }
 
+    // ------------------------------------------------------------------ ping do destino (NET-001)
+    /// <summary>
+    /// Monta a linha de retorno ICMP ao lado do campo (uma linha, opacidade 75%) e liga o campo ao
+    /// coordenador de debounce. A sessão é da invocação: 100 disparos, reiniciada a cada abertura.
+    /// </summary>
+    private TextBlock CreatePingLine(TextBox box, ToolManifest tool)
+    {
+        _pingSession ??= new PingSession(App.Settings.PingTimeoutMs);
+
+        var chip = new TextBlock
+        {
+            FontSize = 12,
+            Opacity = 0.75,                                   // requisito NET-001
+            Margin = new Thickness(12, 0, 2, 9),
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Text = "",
+            Foreground = new SolidColorBrush(UiKit.DimText)
+        };
+
+        var coordinator = new PingCoordinator(_pingSession, App.Settings.PingDebounceMs,
+            sample => DispatcherQueue.TryEnqueue(() => ShowPingSample(chip, sample)));
+        _pings.Add(coordinator);
+        box.TextChanged += (_, _) => coordinator.Edit(box.Text);
+
+        AppPaths.Log($"hud: ping ativo em «{tool.Id}» · debounce={coordinator.DebounceMs} ms · " +
+                     $"timeout={_pingSession.TimeoutMs} ms · trava={PingSession.MaxProbes}");
+        return chip;
+    }
+
+    private void ShowPingSample(TextBlock chip, PingSample? sample)
+    {
+        if (sample is null)
+        {
+            chip.Text = "";
+            return;
+        }
+
+        chip.Text = sample.Text;
+        chip.Foreground = new SolidColorBrush(sample.Outcome switch
+        {
+            PingOutcome.Ok => UiKit.Ok,
+            PingOutcome.BudgetExhausted => UiKit.Warn,
+            _ => UiKit.Bad
+        });
+
+        // a trava precisa de mensagem clara; a frase inteira não cabe ao lado do campo
+        if (sample.Outcome == PingOutcome.BudgetExhausted) StatusText.Text = PingSession.BudgetMessage;
+    }
+
+    private void DisposePings()
+    {
+        if (_pings.Count > 0)
+            AppPaths.Log($"hud ping: sessão encerrada ({_pingSession?.Used}/{PingSession.MaxProbes})");
+        foreach (var coordinator in _pings) coordinator.Dispose();
+        _pings.Clear();
+        _pingSession = null;
+    }
+
+    /// <summary>
+    /// Diagnóstico (`--hud <id> --fill <valor>`): escreve no primeiro campo aberto pelo mesmo caminho
+    /// da digitação, para provar a linha de ping sem teclado sintético na máquina do usuário.
+    /// </summary>
+    public void FillFirstField(string value)
+    {
+        if (_boxes.Count == 0)
+        {
+            AppPaths.Log("hud --fill: nenhum campo aberto");
+            return;
+        }
+
+        // aceita passos separados por "|": cada um é uma edição do campo (prova do debounce e
+        // do cancelamento na tela, sem teclado sintético)
+        var passos = (value ?? "").Split('|', StringSplitOptions.RemoveEmptyEntries);
+        if (passos.Length == 0) return;
+        var indice = 0;
+
+        void Aplicar()
+        {
+            var box = _boxes.Values.First();
+            box.Text = passos[indice];
+            box.Focus(FocusState.Programmatic);
+            AppPaths.Log($"hud --fill [{indice + 1}/{passos.Length}]: «{_active?.Id}» = {passos[indice]} " +
+                         $"(lido de volta: \"{box.Text}\", campos={_boxes.Count})");
+            indice++;
+            if (indice >= passos.Length)
+            {
+                _fillTimer?.Stop();
+                _fillTimer = null;
+            }
+        }
+
+        _fillTimer?.Stop();
+        Aplicar();
+        if (passos.Length <= 1) return;
+
+        _fillTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
+        _fillTimer.Tick += (_, _) => Aplicar();
+        _fillTimer.Start();
+    }
+
+    /// <summary>
+    /// Diagnóstico (`--submit`): executa o MESMO caminho do Enter — campos abertos executam a
+    /// ferramenta ativa; sem campos, invoca o item destacado na lista (é o que o Enter faz na busca).
+    /// </summary>
+    public Task SubmitActiveAsync() => AdvanceAsync();
+
+    /// <summary>
+    /// Diagnóstico (`--cycle <id>`): troca de ferramenta com o painel de campos aberto, pelo MESMO
+    /// caminho das setas (SQ-001), até destacar a ferramenta pedida. Existe para reproduzir o SQ-004
+    /// (Consulta SSE alcançada ciclando) sem teclado sintético na máquina de quem trabalha.
+    /// </summary>
+    public void CycleTo(string toolId)
+    {
+        if (_active is null && ResultsList.SelectedItem is null)
+        {
+            AppPaths.Log("hud --cycle: nenhuma ferramenta destacada");
+            return;
+        }
+
+        for (var passo = 0; passo <= _rows.Count; passo++)
+        {
+            var destacado = (ResultsList.SelectedItem as ToolRow)?.Tool.Id;
+            if (string.Equals(destacado, toolId, StringComparison.OrdinalIgnoreCase))
+            {
+                AppPaths.Log($"hud --cycle: destacado «{toolId}» após {passo} passo(s)");
+                return;
+            }
+
+            // mesma decisão das setas: com campos abertos, TrocarFerramenta; sem campos
+            // (ferramenta de base local), só move a seleção — é o que a busca faz.
+            if (_active is not null)
+            {
+                if (!TrocarFerramenta(1))
+                {
+                    AppPaths.Log($"hud --cycle: setas pararam antes de «{toolId}» (atual: {destacado})");
+                    return;
+                }
+            }
+            else
+            {
+                MoveSelection(1);
+            }
+        }
+
+        AppPaths.Log($"hud --cycle: «{toolId}» não alcançada ({(ResultsList.SelectedItem as ToolRow)?.Tool.Id}, {_rows.Count} itens)");
+    }
+
     private void OnFieldKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == VirtualKey.Enter)
         {
             e.Handled = true;
             if (_active is not null) _ = ExecuteAsync(_active);
+        }
+        else if (e.Key == VirtualKey.Up || e.Key == VirtualKey.Down)
+        {
+            // SQ-001/D5: setas trocam de ferramenta — a menos que o campo declare que as usa.
+            var campo = _active?.Inputs.FirstOrDefault(f =>
+                _boxes.TryGetValue(f.Key, out var box) && ReferenceEquals(box, sender));
+            if (campo is not null && campo.UsesArrows) return;
+
+            if (TrocarFerramenta(e.Key == VirtualKey.Up ? -1 : +1)) e.Handled = true;
         }
         else if (e.Key == VirtualKey.Escape)
         {
@@ -407,10 +633,44 @@ public sealed partial class CommandHud : Window
         }
     }
 
+    /// <summary>
+    /// Move a seleção entre as ferramentas do resultado com wrap-around, mantendo o painel de campos
+    /// aberto (antes, ao dar Enter, o foco ia para o campo e as setas morriam ali).
+    /// </summary>
+    private bool TrocarFerramenta(int passo)
+    {
+        var lista = _rows.ToList();
+        if (lista.Count < 2 || _active is null) return false;
+
+        var atual = lista.FindIndex(r => ReferenceEquals(r.Tool, _active));
+        if (atual < 0) return false;
+
+        var proximo = (atual + passo + lista.Count) % lista.Count;
+        var alvo = lista[proximo];
+
+        AppPaths.Log($"hud: ↑↓ {atual + 1}→{proximo + 1} de {lista.Count} — {alvo.Tool.Id}");
+        ResultsList.SelectedIndex = proximo;
+        ShowFields(alvo.Tool);
+        return true;
+    }
+
     // ------------------------------------------------------------------ execução
     private async Task ExecuteAsync(ToolManifest tool)
     {
         if (_busy) return;
+
+        AppPaths.Log($"hud execute: «{tool.Id}» kind={(tool.IsDataset ? "dataset" : "script")} " +
+                     $"script=\"{tool.Script}\" campos={tool.Inputs.Count}");
+
+        // SQ-004: base local nunca executa processo. Se algum caminho chegar aqui com uma ferramenta
+        // dataset, o destino certo é o painel dela — não o ToolRunner.
+        if (tool.IsDataset)
+        {
+            AppPaths.Log($"hud execute: «{tool.Id}» é base local — abrindo o painel");
+            HideHud();
+            SsePanelController.Open();
+            return;
+        }
 
         var inputs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string? validationError = null;
@@ -434,7 +694,7 @@ public sealed partial class CommandHud : Window
                 continue;
             }
 
-            var problem = ValidateField(field, value);
+            var problem = FieldValidation.Check(field, value);
             if (problem is not null) { validationError ??= problem; continue; }
             inputs[field.Key] = value;
         }
@@ -454,44 +714,24 @@ public sealed partial class CommandHud : Window
         var result = await ToolRunner.RunAsync(tool, inputs, _cts.Token);
         SetBusy(false);
 
-        var inputLabel = string.Join(" · ", inputs.Values);
+        var inputLabel = tool.HistoryLabel(inputs);
         HistoryStore.Append(new HistoryEntry(DateTime.Now, tool.Id, tool.Name, inputLabel,
-            result.Ok, result.Elapsed.TotalSeconds, result.Ok ? result.Value : result.Detail));
+            result.Ok, result.Elapsed.TotalSeconds, result.Ok ? result.Value : result.Detail, "hud"));
 
-        if (result.Ok) await PresentSuccessAsync(tool, result, inputLabel);
+        if (result.Ok) await PresentSuccessAsync(tool, result, inputLabel, inputs);
         else await PresentFailureAsync(tool, result);
     }
 
-    private static string? ValidateField(ToolInput field, string value)
+    private async Task PresentSuccessAsync(ToolManifest tool, RunResult result, string inputLabel,
+        IReadOnlyDictionary<string, string> inputs)
     {
-        switch (field.Type)
-        {
-            case "ip":
-            {
-                var text = value;
-                var slash = text.IndexOf('/');
-                if (slash > 0) text = text[..slash];
-                var parts = text.Split('.');
-                if (parts.Length != 4) return $"«{field.Label}»: esperado um IPv4, ex.: 10.0.0.1";
-                foreach (var part in parts)
-                {
-                    if (!byte.TryParse(part, out var octet)) return $"«{field.Label}»: octeto inválido em «{value}».";
-                    _ = octet;
-                }
-                return null;
-            }
-            case "mac":
-            {
-                var hex = new string(value.Where(Uri.IsHexDigit).ToArray());
-                return hex.Length >= 6 ? null : $"«{field.Label}»: preciso de pelo menos 6 dígitos hex (ex.: 00:1A:2B).";
-            }
-            default:
-                return null;
-        }
-    }
+        // NET-001: os 2 últimos retornos de ping do endereço consultado vão no aviso de resultado.
+        // Lido ANTES de HideHud(), que encerra a sessão de ping desta invocação.
+        var pingField = tool.Inputs.FirstOrDefault(i => i.Ping);
+        var pingLine = pingField is not null && inputs.TryGetValue(pingField.Key, out var ipText)
+            ? _pingSession?.Summary(ipText, 2) ?? ""
+            : "";
 
-    private async Task PresentSuccessAsync(ToolManifest tool, RunResult result, string inputLabel)
-    {
         var mode = SettingsService.OutputModeFor(tool.Id, tool.Output.Default);
         var value = result.Value;
 
@@ -501,9 +741,8 @@ public sealed partial class CommandHud : Window
                 AppPaths.Log("clipboard: SetText falhou");
         }
 
-        var subtitle = value.Trim() == "0" && !string.IsNullOrWhiteSpace(tool.Output.SuccessLabel)
-            ? tool.Output.SuccessLabel
-            : tool.Output.ValueLabel;
+        // NET-004: "0" é resposta, não erro — mas precisa de contexto ("<IP> sem SN").
+        var subtitle = result.SuccessSubtitle(tool, tool.Output.ValueLabel);
 
         HideHud();
 
@@ -514,7 +753,7 @@ public sealed partial class CommandHud : Window
             if (!typed) subtitle = "não foi possível digitar — o valor está na área de transferência";
         }
 
-        ToastController.ShowSuccess(tool, value, subtitle, mode);
+        ToastController.ShowSuccess(tool, value, subtitle, mode, pingLine);
     }
 
     private async Task PresentFailureAsync(ToolManifest tool, RunResult result)
@@ -540,7 +779,9 @@ public sealed partial class CommandHud : Window
         ErrorText.Text = message;
         ErrorBanner.Visibility = Visibility.Visible;
         RetryButton.Visibility = canRetry ? Visibility.Visible : Visibility.Collapsed;
-        ProbeButton.Visibility = showProbe || tool?.Network is not null ? Visibility.Visible : Visibility.Collapsed;
+        // "Verificar conexão" só quando a falha é de rede. Numa validação (IP/MAC inválido) o botão
+        // convidava a testar a VPN por causa de um erro de digitação.
+        ProbeButton.Visibility = showProbe ? Visibility.Visible : Visibility.Collapsed;
         StatusText.Text = "";
         ApplySize();
     }
