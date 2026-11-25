@@ -77,6 +77,7 @@ Var FalhouDownload
 Var PinFalhou
 Var RemoverDados       ; desinstalador (checkbox)
 Var Prog
+Var SaidaComando       ; saída do último RodarCodigo (diagnóstico no log)
 Var CampoPasta
 Var CampoDados
 
@@ -127,6 +128,18 @@ Function Rodar
   nsExec::ExecToStack '$0'
   Pop $Prog
   Pop $1
+  StrCpy $0 $1
+  Exch $0
+FunctionEnd
+
+; Igual a Rodar, mas devolve o CÓDIGO DE SAÍDA (Rodar devolve a saída, que serve para tar mas não
+; para decidir se o curl terminou). A saída do comando fica em $SaidaComando para o log.
+Function RodarCodigo
+  Exch $0
+  nsExec::ExecToStack '$0'
+  Pop $1
+  Pop $2
+  StrCpy $SaidaComando $2
   StrCpy $0 $1
   Exch $0
 FunctionEnd
@@ -658,7 +671,7 @@ Function BaixarPacote
   StrCpy $9 0
   ${Do}
     Push '"$SYSDIR\curl.exe" -sS -L -C - --max-time 8 --connect-timeout 15 -o "$ZipPath" "$UrlPacote"'
-    Call Rodar
+    Call RodarCodigo
     Pop $4
     Push "$ZipPath"
   Call TamanhoDoArquivo
@@ -698,6 +711,9 @@ Function BaixarPacote
     ${AndIf} $4 != "56"
     ${AndIf} $4 != "0"
       DetailPrint "curl devolveu $4 (verifique proxy/conexão)"
+      Push "ERRO: curl devolveu $4 (bytes=$5 de $BytesEsperados): $SaidaComando"
+      Call EscreverLog
+      Pop $R9
       ${Break}
     ${EndIf}
 
@@ -712,6 +728,9 @@ Function BaixarPacote
   Push "$ZipPath"
   Call TamanhoDoArquivo
   Pop $5
+  Push "download: obtido=$5 esperado=$BytesEsperados (curl=$4)"
+  Call EscreverLog
+  Pop $R9
   ${If} $5 == 0
     StrCpy $FalhouDownload 1
   ${EndIf}
