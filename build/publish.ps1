@@ -95,6 +95,14 @@ $totalMb = [math]::Round(((Get-ChildItem $outDir -Recurse -File | Measure-Object
 $files = (Get-ChildItem $outDir -Recurse -File | Measure-Object).Count
 Write-Host "== pronto: $files arquivos, $totalMb MB em $outDir"
 
+# PKG-001: o ícone do programa tem de estar EMBUTIDO no PE. Sem <ApplicationIcon> o Explorer mostra
+# o ícone genérico mesmo que a janela use Assets/app.ico em runtime — e o release sai errado sem
+# ninguém notar. Roda antes do gate de catálogo.
+Write-Host "== icone do executavel (PKG-001)"
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'build\check-icon.ps1') `
+    -Exe (Join-Path $outDir 'AnalistaHub.exe') -Icon (Join-Path $root 'src\AnalistaHub\Assets\app.ico')
+if ($LASTEXITCODE -ne 0) { throw "icone do executavel nao confere — publicacao bloqueada" }
+
 # Gate permanente: nenhuma publicação passa com ferramenta fora das regras
 # (manifesto inválido, script ausente, credencial sem campo, resíduo de "trigger"). Ver docs/REGRAS-DE-FERRAMENTA.md
 Write-Host "== gate de catálogo (docs/REGRAS-DE-FERRAMENTA.md)"

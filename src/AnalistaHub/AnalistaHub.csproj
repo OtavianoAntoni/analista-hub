@@ -8,6 +8,10 @@
     <RootNamespace>AnalistaHub</RootNamespace>
     <AssemblyName>AnalistaHub</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- PKG-001: ícone do executável. Sem isto o Explorer mostra o ícone genérico, mesmo com a
+         janela usando Assets/app.ico em runtime (AppWindow.SetIcon). O gate build/check-icon.ps1
+         confere o PE antes de publicar. -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <Platforms>x64</Platforms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <UseWinUI>true</UseWinUI>
@@ -20,7 +24,7 @@
     <EnableMsixTooling>false</EnableMsixTooling>
     <PublishReadyToRun>false</PublishReadyToRun>
     <WindowsSdkPackageVersion>10.0.19041.57</WindowsSdkPackageVersion>
-    <Version>2.2.1</Version>
+    <Version>2.3.0</Version>
     <Company>Analista Hub</Company>
     <Product>Analista Hub</Product>
   </PropertyGroup>

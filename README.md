@@ -76,6 +76,10 @@ git tag v0.2.1 && git push origin v0.2.1
 Para gerar o pacote à mão (sem CI): `powershell -File build\package-release.ps1 -Version 0.2.1`
 e suba `dist\release\{*.zip, *.sha256, latest.json}` numa release do GitHub.
 
+O `publish.ps1` roda **`build\check-icon.ps1`** antes do gate de catálogo: ele extrai o ícone do
+`AnalistaHub.exe` e aborta a publicação quando o PE está com o ícone genérico (o ícone é embutido por
+`<ApplicationIcon>` no `.csproj`, não pelo arquivo em `Assets\`).
+
 O canal precisa ser **legível sem autenticação**: em repositório privado o manifesto responde 404.
 Duas saídas que não expõem nada: publicar a pasta numa **share de rede** e apontar `UpdateFeedUrl`
 (em `%LOCALAPPDATA%\AnalistaHub\settings.json`) para `\\servidor\share\AnalistaHub\latest.json`, ou
@@ -240,7 +244,13 @@ AnalistaHub.exe --clear-cred <id>
 AnalistaHub.exe --page <id|home|settings>
 AnalistaHub.exe --ping <ip> [--count N] [--timeout ms]
 AnalistaHub.exe --ping-sim [--debounce ms]
+AnalistaHub.exe --check-tools                 (catálogo + assinatura + lista de NMs em uso)
+AnalistaHub.exe --sign-tools [--force]        (assinatura local dos scripts das ferramentas)
+AnalistaHub.exe --set-rede-path <pasta>       (aponta a pasta de dados da equipe)
 ```
+
+Instalador, modos (todos os usuários × só para mim), assinatura local e o que a desinstalação
+preserva: `docs/INSTALADOR.md`.
 
 ## Aviso
 
