@@ -36,3 +36,8 @@ id_rsa*
 # sistema
 Thumbs.db
 desktop.ini
+
+# evidência de análise (pode conter dado de rede interna: fica fora do git)
+evidence/
+build/installer/app.ico
+build/installer/*.exe

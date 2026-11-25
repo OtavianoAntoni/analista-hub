@@ -64,6 +64,18 @@ jobs:
           if ((Get-Item $zip).Length -ne $asset.size) { throw "tamanho do manifesto nao confere" }
           Write-Host "ok: $($json.version) · $([math]::Round($asset.size/1MB,1)) MB · $hash"
 
+      - name: Gerar o instalador (.exe)
+        shell: pwsh
+        # O Setup é gerado DEPOIS do zip: ele recebe a url/sha256/size do manifesto recém-gerado, então
+        # instala exatamente o pacote desta release e continua verificando o hash na instalação.
+        run: |
+          $json = Get-Content dist/release/latest.json -Raw | ConvertFrom-Json
+          $asset = $json.assets.'win-x64'
+          ./build/build-installer.ps1 -Version $json.version `
+            -ChannelUrl "https://github.com/${{ github.repository }}/releases/latest/download/latest.json" `
+            -AssetUrl $asset.url -Sha256 $asset.sha256 -Size $asset.size
+          if (-not (Test-Path "dist/setup/AnalistaHub-Setup-$($json.version).exe")) { throw "instalador nao gerado" }
+
       - name: Criar release
         shell: pwsh
         env:
@@ -75,10 +87,13 @@ jobs:
             Write-Host "release $tag já existe — removendo para republicar"
             gh release delete $tag --repo '${{ github.repository }}' --yes
           }
+          # o Setup viaja como asset SEPARADO: o updater nunca o baixa como payload
           gh release create $tag `
             (Get-Item dist/release/*.zip).FullName `
             dist/release/latest.json `
             (Get-Item dist/release/*.sha256).FullName `
+            (Get-Item dist/setup/*.exe).FullName `
+            (Get-Item dist/setup/*.sha256).FullName `
             --repo '${{ github.repository }}' `
             --title "Analista Hub $tag" `
             --notes-file dist/release/notas.md `
