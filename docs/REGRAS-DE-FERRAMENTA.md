@@ -50,7 +50,10 @@ problema de catálogo, não de digitação.
    processo e sem rede — o painel é próprio, ver `docs/FERRAMENTA-CONSULTA-SSE.md`).
 3. Nome que o analista consiga achar: a busca é por nome/descrição, então `name` e `description`
    são a interface de invocação. Nada de código curto no manifesto.
-4. Saída declarada (`output.valueLabel`) dizendo **o que** é copiado.
+4. Saída declarada (`output.valueLabel`) dizendo **o que** é copiado. Se a ferramenta tem um valor de
+   "sem resultado" (ex.: `0` = IP fora do inventário), declare também
+   `output.zeroValue` (`title` + `note`): o HUB mostra o título, escreve `<dado> · <note>` e **não
+   copia nada** nesse estado (MKT-001). Sem o bloco, `0` é copiado como qualquer valor.
 5. Se o script pede credencial: `credentials.fields` com `env` (nunca argumento de linha de
    comando) e, quando o serviço permitir, `credentials.validation` para validar ao digitar.
 6. Se depende de serviço: `network.host`/`port` para a bolinha de status e a mensagem de VPN.
@@ -110,6 +113,7 @@ O app vive na bandeja e a janela principal **não pode ser fechada pelo usuário
 | botões **Minimizar** e **Fechar** no rodapé da barra lateral | devolvem a affordance que o X fazia |
 | sair de verdade = menu do ícone → *Fechar aplicativo* | é o único caminho que encerra o processo (`App.ExitApp` + `ForcedExit`) |
 | janela "guardiã" invisível viva | mantém o host XAML de pé se a janela principal morrer por fora |
+| **tamanho fixo** — 1120×760 DIP, sem `WS_THICKFRAME`/`WS_MAXIMIZEBOX` | reflow a cada arrasto era caro e a área nova saía branca pura (UI-004, 2.3) |
 | `ShowMainWindow` recria + `NudgeRender` | rede de segurança: reaproveita, recria se preciso e força repaint |
 
 Teste de regressão: `build/test-janela-branca.py <exe> <ciclos>` — janela com menos de 80 cores

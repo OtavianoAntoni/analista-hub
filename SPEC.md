@@ -53,6 +53,8 @@ resultado. Contrato de chamada na §7.
   sempre no topo.
 - Surge **centrada horizontalmente, a ~15% do topo** do monitor onde está o cursor.
 - Foco imediato no campo de busca; o texto anterior é apagado a cada abertura.
+- O ícone à esquerda da busca é uma **casa** (2.3): clicar fecha a busca e invoca/foca a janela
+  principal. É um botão — alcançável por `Tab`, com tooltip e nome acessível.
 - Esc fecha sem executar nada.
 
 ### 3.3 Busca e seleção
@@ -113,9 +115,11 @@ Layout estilo PowerToys: navegação à esquerda, conteúdo à direita.
 - **Início**: cartões das ferramentas com nome, o que faz e **uma única bolinha de
   status** que reflete comunicação **e** autenticação (ver 5.2). Botões **Abrir** (HUD já filtrada)
   e **Testar** (executa com o valor atual do clipboard).
-- **Bandeja**: clique esquerdo abre o HUD; clique direito abre um menu com o **nome de cada
-  ferramenta** (abre a aba dela), **Buscar ferramenta…**, **Configurações** e **Fechar aplicativo**.
-  O menu é montado na hora, então ferramenta nova aparece sem reiniciar.
+- **Bandeja**: o **clique esquerdo** segue a preferência de Configurações → *Ícone da bandeja*:
+  **Abrir janela principal** (padrão) ou **Abrir busca rápida**; duplo clique faz o mesmo, e o tooltip
+  do ícone diz qual é o modo. O **clique direito** abre um menu com o **nome de cada ferramenta**
+  (abre a aba dela), **Buscar ferramenta…**, **Configurações** e **Fechar aplicativo**. O menu é
+  montado na hora, então ferramenta nova aparece sem reiniciar.
 - **Página da ferramenta** — quatro blocos, espelhando exatamente os quatro itens do `IDEA.md`:
   1. **Para que serve** — descrição em linguagem de operação.
   2. **Como executar** — atalho global, exemplo de uso, duração típica.
@@ -248,6 +252,27 @@ permaneceu válido, sem `.tmp`, com o atalho anterior.
   Configurações → **Busca rápida → Ocultar contagem de ferramentas** (`HideToolCount`). Quando a busca
   não encontra nada, o aviso continua aparecendo — ali o número é o próprio recado.
 
+### 5.7 Janela principal de tamanho fixo (UI-004, 2.3)
+
+A janela principal **não é redimensionável**: 1120×760 DIP, centrada na área útil do monitor e
+limitada a 94 % dela (em 1366×768 resulta 1120×684 px). Não há borda de redimensionamento
+(`WS_THICKFRAME`), botão maximizar (`WS_MAXIMIZEBOX`) nem `X` (R7).
+
+Motivo: eliminar o reflow/repaint a cada arrasto — e o defeito medido no 2.2.1, em que a área nova
+saía **branco puro** (6 %→76 % da janela) enquanto o conteúdo ficava travado em ~1112×676.
+
+- 1120×760 DIP — em 125 % vira 1400×950 px; o tamanho acompanha a escala do monitor.
+- O retângulo **real** (pixels) é guardado 120 ms depois da primeira ativação, quando o DPI assentou.
+  Um **vigia de 300 ms** compara `GetWindowRect` com ele e restaura — é o único caminho que pega
+  maximizar por `WM_SYSCOMMAND` (Win+↑, duplo clique no título), que não emite `AppWindow.Changed` nem
+  atualiza o presenter. Subclass não serve: o WinUI troca o WndProc (mesma razão do WM_CLOSE, §5.3).
+- Ao mover a janela para um monitor com escala diferente, o vigia **adota** o novo retângulo (o
+  Windows já o ajustou) em vez de brigar com ele.
+- Não se fixa o `RootGrid`: forçá-lo ao tamanho do cliente deixava o conteúdo menor que a janela em
+  125 % (a ilha rasteriza em outra escala). Deixar o layout normal + `NudgeRender` preenche certo.
+- Evidência: `evidence/ui-004-fixo-0453aed8-20261125_1435` (100 %: 0,28 % de branco puro) e
+  `evidence/ui-004-fixo-dpi/` (125 %: 0,31 % de branco, SC_MAXIMIZE revertido em ≤ 300 ms).
+
 ---
 
 ## 6. Serviços do HUB
@@ -330,6 +355,20 @@ Preferências em Configurações → **Ping do destino** (espera e timeout). Dia
 `--ping <ip> [--count N]` (ICMP real) e `--ping-sim [--debounce ms]` (debounce, cancelamento e trava,
 com emissor falso — não depende de rede).
 
+### 6.8 Configuração local pela UI (2.3)
+
+O que antes só existia em `config.local.json` passa a ter editor na página da ferramenta — sem tirar
+a possibilidade de editar o arquivo à mão.
+
+| Item | Onde | Regra |
+|---|---|---|
+| **Host do serviço** (MKT-002) | página da ferramenta, campo "Servidor do inventário" | só aparece quando o manifesto declara host como `${CFG:<chave>}` (o catálogo guarda a chave em `NetworkRequirement.HostConfigKey`); grava a chave **e** `<id>.url` na mesma ação; aceita IPv4, hostname ou `host:porta`; substituir valor existente exige um segundo clique em **Salvar** |
+| **Testar conexão** (MKT-002) | ao lado do campo | TCP de 3 s em host:porta; **não** autentica nem consulta inventário |
+| **Lista de NMs** (SSE-002) | página da Consulta SSE, botão **Importar sse-rede.local.json…** | valida o JSON (`ValidarRede`) antes de copiar; confirma a substituição; guarda a anterior como `.bak`; `Reload()` e re-render. O mesmo caminho existe sem UI: `--validate-rede` / `--import-rede [--force]` |
+
+A ausência da lista continua visível: `RedeResumo`/`RedeAviso` na página da ferramenta e em
+**Configurações → Dados e ferramentas**.
+
 ---
 
 ## 7. Contrato com os scripts (para as próximas ferramentas)
@@ -371,6 +410,9 @@ AnalistaHub.exe --test mkt-serial 10.0.0.1
 AnalistaHub.exe --probe mkt-serial
 AnalistaHub.exe --page mkt-serial      (abre a janela já na página da ferramenta)
 AnalistaHub.exe --preview-toast        (mostra um aviso de exemplo, para teste visual)
+AnalistaHub.exe --search-sse ITA       (ranking da Consulta SSE; --limit N)
+AnalistaHub.exe --validate-rede <json> (valida uma lista de NMs sem gravar)
+AnalistaHub.exe --import-rede <json> [--force]   (copia para %LOCALAPPDATA%\AnalistaHub)
 AnalistaHub.exe --version | --help
 ```
 
