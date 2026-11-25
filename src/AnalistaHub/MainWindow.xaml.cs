@@ -30,11 +30,22 @@ public sealed partial class MainWindow : Window
     private Action? _runUpdateCheck;
     private bool _nudging;
 
+    // UI-004 (2.3): tamanho ÚNICO em DIP (1120×760), que o Windows converte para pixels conforme a
+    // escala do monitor (125 % ⇒ 1400×950). Fixar elimina o reflow a cada arrasto — e o defeito de
+    // área não pintada que ele provocava. O retângulo real é guardado depois que o DPI assenta e um
+    // vigia de 300 ms o restaura (maximizar por Win+↑ não passa pelo presenter).
+    private const int FixedWidthDip = 1120;
+    private const int FixedHeightDip = 760;
+    private Native.RECT _rectFixo;
+    private double _escalaFixa = 1.0;
+    private bool _travado;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _vigia;
+
     public MainWindow()
     {
         InitializeComponent();
         Title = "Analista Hub";
-        AppWindow.Resize(new SizeInt32(1120, 760));
+        AppWindow.Resize(new SizeInt32(FixedWidthDip, FixedHeightDip));
         CenterOnScreen();
         UiKit.ApplyChrome(this, round: false);
 
@@ -67,6 +78,7 @@ public sealed partial class MainWindow : Window
     {
         Activated -= OnFirstActivated;
         DisableUserClose();
+        LockWindowSize();
         ScheduleRenderKick();
     }
 
@@ -128,16 +140,97 @@ public sealed partial class MainWindow : Window
         var timer = DispatcherQueue.CreateTimer();
         timer.Interval = TimeSpan.FromMilliseconds(120);
         timer.IsRepeating = false;
-        timer.Tick += (_, _) => NudgeRender();
+        timer.Tick += (_, _) =>
+        {
+            NudgeRender();
+            FixarTamanhoAtual();
+            IniciarVigia();
+        };
         timer.Start();
     }
 
+    /// <summary>
+    /// Guarda o retângulo REAL depois que o DPI assentou. É esse retângulo (não um valor em DIP) que
+    /// o vigia restaura: maximizar por WM_SYSCOMMAND não passa pelo presenter nem pelo
+    /// AppWindow.Changed, então a única testemunha confiável é o GetWindowRect.
+    /// </summary>
+    private void FixarTamanhoAtual()
+    {
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            if (hwnd == IntPtr.Zero || !Native.GetWindowRect(hwnd, out var r)) return;
+            if (r.Right - r.Left <= 0) return;
+
+            _rectFixo = r;
+            _escalaFixa = UiKit.Scale(this);
+            _travado = true;
+            AppPaths.Log($"janela fixa: retângulo {r.Right - r.Left}×{r.Bottom - r.Top} em {r.Left},{r.Top} " +
+                         $"(escala {_escalaFixa:0.##})");
+        }
+        catch (Exception ex) { AppPaths.Log("fixar tamanho: " + ex.Message); }
+    }
+
+    private void IniciarVigia()
+    {
+        try
+        {
+            if (_vigia is not null) return;
+            _vigia = DispatcherQueue.CreateTimer();
+            _vigia.Interval = TimeSpan.FromMilliseconds(300);
+            _vigia.IsRepeating = true;
+            _vigia.Tick += (_, _) => VigiarTamanho();
+            _vigia.Start();
+        }
+        catch (Exception ex) { AppPaths.Log("vigia: " + ex.Message); }
+    }
+
+    private void VigiarTamanho()
+    {
+        try
+        {
+            if (!_travado || !AppWindow.IsVisible) return;
+            if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter
+                { State: Microsoft.UI.Windowing.OverlappedPresenterState.Minimized }) return;
+
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            if (hwnd == IntPtr.Zero || !Native.GetWindowRect(hwnd, out var r)) return;
+
+            // Mudou de monitor (DPI diferente)? O Windows já ajustou o tamanho; adotar em vez de
+            // brigar — e o alvo passa a ser o novo, coerente com a escala do monitor.
+            var escala = UiKit.Scale(this);
+            if (Math.Abs(escala - _escalaFixa) > 0.01)
+            {
+                AppPaths.Log($"janela fixa: DPI {_escalaFixa:0.##}→{escala:0.##}; adotando o novo retângulo");
+                FixarTamanhoAtual();
+                NudgeRender();
+                return;
+            }
+
+            var largura = r.Right - r.Left;
+            var altura = r.Bottom - r.Top;
+            var alvoL = _rectFixo.Right - _rectFixo.Left;
+            var alvoA = _rectFixo.Bottom - _rectFixo.Top;
+            if (Math.Abs(largura - alvoL) <= 4 && Math.Abs(altura - alvoA) <= 4) return;
+
+            AppPaths.Log($"janela fixa: vigia viu {largura}×{altura} (alvo {alvoL}×{alvoA}); restaurando");
+            Native.SetWindowPos(hwnd, IntPtr.Zero, _rectFixo.Left, _rectFixo.Top, alvoL, alvoA,
+                Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+            NudgeRender();
+        }
+        catch (Exception ex) { AppPaths.Log("vigia: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// Tamanho ÚNICO da janela principal (UI-004): 1120×760 px, centrada na área útil do monitor onde
+    /// está o cursor e limitada a 94 % dela. Fixar elimina o reflow a cada arrasto — e o defeito de
+    /// área não pintada que aparecia ao esticar. Em DPI diferente de 100 % o Windows pode escalar a
+    /// janela ao movê-la entre monitores (limitação do WinUI 3 nesta versão); o tamanho em 100 % é o
+    /// que o app garante.
+    /// </summary>
     private void CenterOnScreen()
     {
         var (left, top, right, bottom) = UiKit.WorkAreaAtCursor();
-
-        // a janela não pode ser maior que a área útil: em tela 1366x768 (ou com escala 125 %)
-        // o tamanho padrão estourava e o conteúdo da direita ficava fora do monitor
         var maxWidth = (int)((right - left) * 0.94);
         var maxHeight = (int)((bottom - top) * 0.94);
         var size = AppWindow.Size;
@@ -149,7 +242,50 @@ public sealed partial class MainWindow : Window
             left + Math.Max(0, (right - left - width) / 2),
             top + Math.Max(0, (bottom - top - height) / 2),
             width, height));
+
+        AppPaths.Log($"janela: {size.Width}×{size.Height} → {width}×{height} px " +
+                     $"(área útil {right - left}×{bottom - top})");
     }
+
+    /// <summary>
+    /// Tira a borda de redimensionamento e o maximizar. O presenter cuida do lado do WinUI; os
+    /// estilos clássicos (WS_THICKFRAME/WS_MAXIMIZEBOX) garantem que o Windows não devolva a alça ao
+    /// mover a janela para outro monitor ou ao reaplicar estilos.
+    /// Subclass em WM_SYSCOMMAND não serve aqui: o WinUI troca o WndProc da janela depois (a mesma
+    /// razão pela qual o WM_CLOSE não é cancelável — SPEC §5.3). Maximizar por Win+↑ é revertido pelo
+    /// guard de tamanho em <see cref="HookDpiChanges"/>.
+    /// </summary>
+    private void LockWindowSize()
+    {
+        try
+        {
+            if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+            {
+                presenter.IsResizable = false;
+                presenter.IsMaximizable = false;
+            }
+
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            if (hwnd == IntPtr.Zero) return;
+
+            var style = Native.GetWindowLongPtr(hwnd, Native.GWL_STYLE).ToInt64();
+            var semBorda = style & ~(Native.WS_THICKFRAME | Native.WS_MAXIMIZEBOX);
+            if (semBorda == style)
+            {
+                AppPaths.Log("janela fixa: já sem borda de redimensionamento");
+                return;
+            }
+
+            Native.SetWindowLongPtr(hwnd, Native.GWL_STYLE, (IntPtr)semBorda);
+            Native.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_FRAMECHANGED);
+            AppPaths.Log("janela fixa: borda de redimensionamento e maximizar removidos");
+        }
+        catch (Exception ex) { AppPaths.Log("lock size: " + ex.Message); }
+    }
+
+    /// <summary>Diagnóstico: rola a página atual (usado por <c>--scroll-y</c> para provar blocos abaixo da dobra).</summary>
+    public void ScrollContentTo(double offset) => ContentScroll.ChangeView(null, offset, null, true);
 
     public void SetHotkeyWarning(string message)
     {
@@ -555,8 +691,25 @@ public sealed partial class MainWindow : Window
         var result = await ToolRunner.RunAsync(tool, inputs, CancellationToken.None);
         if (result.Ok)
         {
-            ClipboardService.SetText(result.Value);
-            ToastController.ShowSuccess(tool, result.Value, tool.Output.ValueLabel, "clipboard");
+            // MKT-001: "sem SN" não copia nada. No painel o campo de IP pode ter vindo do clipboard,
+            // então a legenda usa o valor copiado quando não há entrada digitada.
+            if (result.IsZeroComNota(tool))
+            {
+                var paraNota = inputs;
+                if (paraNota.Count == 0 && !string.IsNullOrWhiteSpace(clip) && tool.Inputs.Count > 0)
+                    paraNota = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [tool.Inputs[0].Key] = clip
+                    };
+
+                ToastController.ShowSuccess(tool, tool.Output.ZeroValue!.Title,
+                    result.ZeroSubtitle(tool, paraNota), "notify");
+            }
+            else
+            {
+                ClipboardService.SetText(result.Value);
+                ToastController.ShowSuccess(tool, result.Value, tool.Output.ValueLabel, "clipboard");
+            }
         }
         else
         {
@@ -657,6 +810,74 @@ public sealed partial class MainWindow : Window
                 : catalog.Error ?? "base não carregada"));
             if (catalog.Sources.Count > 0)
                 data.Children.Add(KeyValue("Origem", string.Join("   ·   ", catalog.Sources.Select(s => s.File))));
+
+            // NET-005: de onde veio a lista de NMs (share, variável, pasta do usuário) e o caminho
+            // efetivo. Quando a origem configurada falha, o aviso aparece AQUI — não só no log.
+            data.Children.Add(KeyValue("Rede interna", catalog.RedeResumo));
+            if (catalog.RedeAviso.Length > 0)
+                data.Children.Add(Muted(catalog.RedeAviso));
+
+            // recarrega sem fechar o app: o catálogo é singleton e a lista de NMs pode ter chegado
+            // ao share depois da abertura
+            var recarregar = new Button { Content = "Recarregar dados" };
+            recarregar.Click += (_, _) =>
+            {
+                var novo = SseCatalog.Reload();
+                AppPaths.Log($"Recarregar dados: {novo.RedeResumo}");
+                RenderSelectedPage();
+                Views.ToastController.ShowMessage("Base recarregada",
+                    $"{novo.Cities.Count} cidades · {novo.TotalWithAccess} com NM",
+                    novo.RedeResumo);
+            };
+            data.Children.Add(recarregar);
+
+            // SSE-002: importar a lista de NMs pela UI. Antes só dava para editar config.local.json ou
+            // copiar o arquivo à mão — e a consulta ficava sem NM sem o usuário saber o motivo.
+            var importar = new Button { Content = "Importar sse-rede.local.json…" };
+            importar.Click += async (_, _) =>
+            {
+                var picker = new Windows.Storage.Pickers.FileOpenPicker();
+                WinRT.Interop.InitializeWithWindow.Initialize(picker,
+                    WinRT.Interop.WindowNative.GetWindowHandle(this));
+                picker.FileTypeFilter.Add(".json");
+
+                var arquivo = await picker.PickSingleFileAsync();
+                if (arquivo is null) return;
+
+                var validacao = SseCatalog.ValidarRede(arquivo.Path);
+                if (!validacao.Ok)
+                {
+                    ToastController.ShowFailure(null, "Arquivo recusado",
+                        "O JSON não serve como lista de NMs.\n" + validacao.Motivo);
+                    return;
+                }
+
+                if (File.Exists(Path.Combine(AppPaths.DataDir, "sse-rede.local.json")))
+                {
+                    var confirmar = new ContentDialog
+                    {
+                        Title = "Substituir a lista atual?",
+                        Content = "Já existe uma lista importada. A atual será guardada como .bak.",
+                        PrimaryButtonText = "Substituir",
+                        CloseButtonText = "Cancelar",
+                        XamlRoot = RootGrid.XamlRoot
+                    };
+                    if (await confirmar.ShowAsync() != ContentDialogResult.Primary) return;
+                }
+
+                var importado = SseCatalog.ImportarRede(arquivo.Path, sobrescrever: true);
+                if (!importado.Ok)
+                {
+                    ToastController.ShowFailure(null, "Não consegui importar", importado.Motivo);
+                    return;
+                }
+
+                RenderSelectedPage();
+                ToastController.ShowMessage("Lista de NMs importada",
+                    $"{importado.Cidades} cidade(s)", AppPaths.DataDir + "\\sse-rede.local.json");
+            };
+            data.Children.Add(importar);
+
             data.Children.Add(Muted("Nada é consultado na rede: os dados ficam neste arquivo (planilhas do SSE + " +
                                     "cadastro de municípios da ANATEL). Para atualizar, rode build_merge.py e copie o " +
                                     "JSON para a pasta de dados do Hub."));
@@ -687,6 +908,91 @@ public sealed partial class MainWindow : Window
                 var clip = field.EmptyUsesClipboard ? " · vazio = clipboard" : "";
                 requirements.Children.Add(KeyValue($"Entrada: {field.Label}", $"{field.Type} · {required}{clip}{line}"));
             }
+        }
+
+        // 3b.1 — servidor do inventário (MKT-002). O manifesto traz ${CFG:<chave>} e a página passa a
+        // ter editor; a chave vem do catálogo (NetworkRequirement.HostConfigKey), sem if por id.
+        if (tool.Network is { } redeHost && redeHost.HostConfigKey.Length > 0)
+        {
+            var servidor = new StackPanel { Spacing = 8 };
+            var campoHost = new TextBox
+            {
+                Header = "Servidor do inventário (IP ou host)",
+                Text = redeHost.Host,
+                PlaceholderText = "10.0.0.1",
+                FontFamily = new FontFamily("Consolas"),
+                Width = 320
+            };
+            var statusHost = Muted("");
+            var confirmarTroca = false;
+
+            var salvarHost = new Button { Content = "Salvar" };
+            salvarHost.Click += (_, _) =>
+            {
+                var problema = ServiceHost.Problema(campoHost.Text, redeHost.Port);
+                if (problema is not null)
+                {
+                    statusHost.Text = problema;
+                    return;
+                }
+
+                var (host, porta) = ServiceHost.Separar(campoHost.Text, redeHost.Port);
+                var atual = LocalConfig.Get(redeHost.HostConfigKey);
+
+                // não sobrescreve configuração existente sem um segundo clique explícito
+                if (!confirmarTroca && atual.Length > 0 &&
+                    !string.Equals(atual, host, StringComparison.OrdinalIgnoreCase))
+                {
+                    confirmarTroca = true;
+                    statusHost.Text = $"Já configurado como {atual}. Clique em Salvar de novo para substituir.";
+                    return;
+                }
+
+                if (!LocalConfig.Set(redeHost.HostConfigKey, host))
+                {
+                    statusHost.Text = "Não consegui gravar em " + LocalConfig.FilePath;
+                    return;
+                }
+
+                // a validação de credenciais usa outra chave: as duas precisam apontar para o mesmo host
+                LocalConfig.Set(tool.Id + ".url", ServiceHost.UrlAuth(host, porta));
+
+                App.ReloadCatalog();
+                RenderSelectedPage();
+                ToastController.ShowMessage("Servidor salvo", $"{host}:{porta}",
+                    "Gravado em config.local.json. A validação de credenciais passa a usar este endereço.");
+            };
+
+            var testarHost = new Button { Content = "Testar conexão" };
+            testarHost.Click += async (_, _) =>
+            {
+                var problema = ServiceHost.Problema(campoHost.Text, redeHost.Port);
+                if (problema is not null)
+                {
+                    statusHost.Text = problema;
+                    return;
+                }
+
+                var (host, porta) = ServiceHost.Separar(campoHost.Text, redeHost.Port);
+                testarHost.IsEnabled = false;
+                statusHost.Text = $"testando TCP em {host}:{porta}…";
+                var ok = await Probes.CheckTcpAsync(host, porta, 3000);
+                testarHost.IsEnabled = true;
+                statusHost.Text = ok
+                    ? $"acessível em {host}:{porta} (TCP; não valida login)"
+                    : $"sem resposta de {host}:{porta} — verifique a VPN e o endereço";
+            };
+
+            var linhaHost = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            linhaHost.Children.Add(campoHost);
+            linhaHost.Children.Add(salvarHost);
+            linhaHost.Children.Add(testarHost);
+
+            servidor.Children.Add(linhaHost);
+            servidor.Children.Add(statusHost);
+            servidor.Children.Add(Muted("Fica em " + LocalConfig.FilePath + ". Testar conexão mede só o " +
+                "TCP: não consulta o inventário nem valida a senha."));
+            requirements.Children.Add(servidor);
         }
 
         // 3c — credenciais: digitáveis, gravadas sozinhas e validadas no serviço
@@ -1375,6 +1681,8 @@ public sealed partial class MainWindow : Window
         dataPanel.Children.Add(dataRow);
         dataPanel.Children.Add(Muted("Ferramentas do usuário: " + AppPaths.ToolsDir));
         dataPanel.Children.Add(Muted("Dados: " + AppPaths.DataDir));
+        // SSE-002: o mesmo aviso da página da ferramenta, para a ausência da lista não passar batida.
+        dataPanel.Children.Add(Muted("Lista de NMs: " + SseCatalog.Current.RedeResumo));
         AddBlock("Dados e ferramentas", dataPanel);
 
         // histórico
@@ -1396,6 +1704,66 @@ public sealed partial class MainWindow : Window
         historyPanel.Children.Add(historyToggle);
         historyPanel.Children.Add(clearHistory);
         AddBlock("Histórico", historyPanel);
+
+        // ícone da bandeja (CFG-004): o que o clique esquerdo faz. Rótulos fixos nas duas pontas e
+        // descrição viva abaixo — mesmo desenho de slide, sem inventar controle novo.
+        var trayPanel = new StackPanel { Spacing = 8 };
+        var trayRow = new Grid { ColumnSpacing = 10 };
+        trayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        trayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        trayRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var trayWindowLabel = new TextBlock
+        {
+            Text = "Abrir janela principal",
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var traySwitch = new ToggleSwitch
+        {
+            IsOn = SettingsService.TrayLeftClickActionFor() == "search",
+            MinWidth = 0,
+            Margin = new Thickness(0),
+            // os rótulos do slide são os dois TextBlock das pontas; nada de "Ativado/Desativado"
+            OnContent = null,
+            OffContent = null
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(traySwitch,
+            "Clique esquerdo no ícone da bandeja");
+        var traySearchLabel = new TextBlock
+        {
+            Text = "Abrir busca rápida",
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var trayDesc = Muted("");
+        void UpdateTrayDesc() =>
+            trayDesc.Text = traySwitch.IsOn
+                ? "O clique esquerdo no ícone da bandeja abre a busca rápida."
+                : "O clique esquerdo no ícone da bandeja abre a janela principal do Analista HUB.";
+        UpdateTrayDesc();
+
+        traySwitch.Toggled += (_, _) =>
+        {
+            App.Settings.TrayLeftClickAction = traySwitch.IsOn ? "search" : "window";
+            SettingsService.Save();
+            UpdateTrayDesc();
+            App.Tray?.SetTooltip(App.TooltipBandeja());
+            AppPaths.Log("bandeja: clique esquerdo = " + App.Settings.TrayLeftClickAction);
+        };
+
+        Grid.SetColumn(traySwitch, 1);
+        Grid.SetColumn(traySearchLabel, 2);
+        trayRow.Children.Add(trayWindowLabel);
+        trayRow.Children.Add(traySwitch);
+        trayRow.Children.Add(traySearchLabel);
+
+        trayPanel.Children.Add(trayRow);
+        trayPanel.Children.Add(trayDesc);
+        trayPanel.Children.Add(Muted(
+            "O clique direito continua abrindo o menu (Restaurar / Sair). O duplo clique faz o mesmo " +
+            "que o clique esquerdo."));
+        AddBlock("Ícone da bandeja", trayPanel);
 
         // busca rápida (HUD)
         var hudPanel = new StackPanel { Spacing = 8 };
@@ -1694,6 +2062,57 @@ public sealed partial class MainWindow : Window
         updatePanel.Children.Add(Muted("A troca de versão fecha o app, substitui a pasta do programa e abre de novo. Se a versão nova não abrir, a anterior volta sozinha."));
         AddBlock("Atualizações", updatePanel);
         RefreshUpdateState();
+
+        // SIG-001: assinatura local das ferramentas (satisfaz a política de execução do PowerShell)
+        var assinaturaPanel = new StackPanel { Spacing = 8 };
+        var assinaturaStatus = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12 };
+        var assinaturaDetalhe = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 11, Opacity = 0.75 };
+
+        void MostrarAssinatura(AssinaturaEstado? estado)
+        {
+            var status = estado?.Status ?? "ausente";
+            assinaturaStatus.Text = status switch
+            {
+                "ok" => "ativa",
+                "ausente" => "ausente",
+                "invalida" => "inválida",
+                "politica_bloqueia" => "bloqueada pela política",
+                "somente_leitura" => "somente leitura (quem assina é o instalador)",
+                _ => status
+            } + (estado is null ? "" : $" · {estado.Motivo}");
+
+            var linhas = new List<string>();
+            if (estado is not null && estado.Thumbprint.Length > 0)
+                linhas.Add($"impressão digital {estado.ThumbprintCurto} · válido até {estado.ValidoAte}");
+            if (estado is not null && estado.Politica.Length > 0)
+                linhas.Add($"política de execução: {estado.Politica}");
+            linhas.Add("Assinatura local satisfaz a política de execução do PowerShell — não é prova de autoria.");
+            assinaturaDetalhe.Text = string.Join(Environment.NewLine, linhas);
+            assinaturaDetalhe.Visibility = Visibility.Visible;
+        }
+
+        MostrarAssinatura(ToolSigning.LerEstado());
+
+        var reassinar = new Button { Content = "Reassinar ferramentas" };
+        reassinar.Click += (_, _) =>
+        {
+            reassinar.IsEnabled = false;
+            assinaturaStatus.Text = "assinando os scripts…";
+            _ = Task.Run(() =>
+            {
+                var estado = ToolSigning.Ensure(forcar: true);
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    MostrarAssinatura(estado);
+                    reassinar.IsEnabled = true;
+                });
+            });
+        };
+
+        assinaturaPanel.Children.Add(assinaturaStatus);
+        assinaturaPanel.Children.Add(assinaturaDetalhe);
+        assinaturaPanel.Children.Add(reassinar);
+        AddBlock("Assinatura local", assinaturaPanel);
 
         // sobre
         var about = new StackPanel { Spacing = 6 };

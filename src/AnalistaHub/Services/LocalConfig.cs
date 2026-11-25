@@ -43,10 +43,7 @@ public static class LocalConfig
                 {
                     if (File.Exists(FilePath))
                     {
-                        var map = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(FilePath));
-                        if (map is not null)
-                            foreach (var kv in map)
-                                if (!string.IsNullOrWhiteSpace(kv.Value)) _values[kv.Key] = kv.Value;
+                        foreach (var kv in ReadFile()) _values[kv.Key] = kv.Value;
                         AppPaths.Log($"LocalConfig: {_values.Count} chave(s) de {FilePath}");
                     }
                     else
@@ -60,6 +57,71 @@ public static class LocalConfig
                 }
                 return _values;
             }
+        }
+    }
+
+    /// <summary>
+    /// Lê o arquivo para um dicionário plano. Aceita objeto com valores texto, número/booleano e
+    /// LISTA de textos (a lista vira texto separado por ';' — é o que permite
+    /// <c>"sse-rede.candidatos": ["\\\\srv\\a.json", "\\\\srv\\b.json"]</c> sem quebrar o formato
+    /// plano das outras chaves; ver <see cref="GetList"/>).
+    /// </summary>
+    private static Dictionary<string, string> ReadFile()
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!File.Exists(FilePath)) return map;
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(FilePath), new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true
+        });
+        if (doc.RootElement.ValueKind != JsonValueKind.Object) return map;
+
+        foreach (var kv in doc.RootElement.EnumerateObject())
+        {
+            var valor = kv.Value.ValueKind switch
+            {
+                JsonValueKind.String => kv.Value.GetString() ?? "",
+                JsonValueKind.Array => string.Join(";", kv.Value.EnumerateArray()
+                    .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() ?? "" : item.ToString())
+                    .Where(item => !string.IsNullOrWhiteSpace(item))),
+                JsonValueKind.Null => "",
+                _ => kv.Value.ToString()
+            };
+            if (!string.IsNullOrWhiteSpace(valor)) map[kv.Name] = valor;
+        }
+        return map;
+    }
+
+    /// <summary>Valor como lista: aceita a forma de array no JSON ou texto separado por ';'.</summary>
+    public static List<string> GetList(string chave) =>
+        Get(chave).Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    /// <summary>
+    /// Grava UMA chave preservando as demais (usado pelo instalador para apontar a pasta da equipe).
+    /// Valor vazio remove a chave.
+    /// </summary>
+    public static bool Set(string chave, string valor)
+    {
+        if (string.IsNullOrWhiteSpace(chave)) return false;
+        try
+        {
+            AppPaths.Ensure();
+            var mapa = ReadFile();
+            if (string.IsNullOrWhiteSpace(valor)) mapa.Remove(chave);
+            else mapa[chave] = valor.Trim();
+
+            var ordenado = new SortedDictionary<string, string>(mapa, StringComparer.OrdinalIgnoreCase);
+            var json = JsonSerializer.Serialize(ordenado, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(FilePath, json, new UTF8Encoding(false));
+            Invalidate();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppPaths.Log($"LocalConfig: gravação de \"{chave}\" falhou — {ex.Message}");
+            return false;
         }
     }
 

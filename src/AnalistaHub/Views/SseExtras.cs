@@ -55,6 +55,31 @@ public static class SseExtras
             Margin = new Thickness(0, 0, 0, 2)
         });
 
+        // NET-005: qual lista de NMs está em uso AGORA e o botão para reler sem reabrir o app.
+        // Fica no ⚙ porque é ali que o usuário vai procurar quando "não aparece o NM".
+        var redeAtual = SseCatalog.Current;
+        var statusRede = new TextBlock
+        {
+            Text = redeAtual.RedeResumo,
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = redeAtual.RedeAviso.Length > 0 ? 0.75 : 1
+        };
+        ToolTipService.SetToolTip(statusRede, "Ordem: config.local.json (sse-rede.path, sse-rede.candidatos) → " +
+                                              $"variável {SseCatalog.RedeEnvVar} → pasta do aplicativo → pasta do usuário");
+
+        var btnRecarregar = new Button { Content = "Recarregar dados" };
+        btnRecarregar.Click += (_, _) =>
+        {
+            var nova = SseCatalog.Reload();
+            statusRede.Text = nova.RedeResumo;
+            AppPaths.Log($"Recarregar dados (⚙): {nova.RedeResumo}");
+            onChange?.Invoke();
+        };
+
+        painel.Children.Add(statusRede);
+        painel.Children.Add(btnRecarregar);
+
         var ckNm = new CheckBox
         {
             Content = "Registro de NM por cidade",

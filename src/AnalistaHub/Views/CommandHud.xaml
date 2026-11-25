@@ -19,8 +19,16 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            <FontIcon x:Name="SearchIcon" Glyph="&#xE721;" FontSize="18" Margin="0,0,12,0"
-                      VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <!-- SQ-005: a lupa virou casa — invoca a janela principal e fecha a busca. Button (não
+                 FontIcon) para ser alcançável por Tab e ter nome acessível. -->
+            <Button x:Name="HomeButton" Padding="4" Margin="0,0,8,0" Background="Transparent"
+                    BorderThickness="0" VerticalAlignment="Center"
+                    Click="OnHomeClick"
+                    ToolTipService.ToolTip="Abrir janela principal"
+                    AutomationProperties.Name="Abrir janela principal">
+                <FontIcon Glyph="&#xE80F;" FontSize="17"
+                          Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Button>
             <TextBox x:Name="SearchBox" Grid.Column="1" BorderThickness="0" Background="Transparent"
                      FontSize="20" PlaceholderText="Buscar ferramenta ou descrição…" />
         </Grid>
@@ -63,6 +71,8 @@
                     <Button x:Name="ProbeButton" Content="Verificar conexão" Click="OnProbeClick"
                             Visibility="Collapsed" />
                     <Button x:Name="CopyDetailButton" Content="Copiar detalhe" Click="OnCopyDetailClick" />
+                    <Button x:Name="CloseButton" Content="Fechar" Click="OnCloseErrorClick"
+                            Visibility="Collapsed" />
                 </StackPanel>
             </StackPanel>
         </Border>

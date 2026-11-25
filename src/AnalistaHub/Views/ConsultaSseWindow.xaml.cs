@@ -93,7 +93,29 @@ public sealed partial class ConsultaSseWindow : Window
         NmsToggle.Unchecked += OnNmsToggleChanged;
 
         BuildExtraMenu();
+
+        // NET-005: "Recarregar dados" (no ⚙ ou na janela principal) atualiza este painel sem fechar.
+        // A assinatura é desfeita no Closed para não sobrar handler apontando para janela morta.
+        SseCatalog.Reloaded += OnCatalogoRecarregado;
+        Closed += (_, _) => SseCatalog.Reloaded -= OnCatalogoRecarregado;
     }
+
+    private void OnCatalogoRecarregado() => DispatcherQueue.TryEnqueue(() =>
+    {
+        try
+        {
+            var catalog = SseCatalog.Current;
+            HeaderInfo.Text = catalog.Loaded
+                ? $"{catalog.Cities.Count} cidades · {catalog.TotalWithAccess} com NM · base de {catalog.Generated}"
+                : "base indisponível";
+            SourceText.Text = catalog.Loaded
+                ? "fonte: " + catalog.DataPath +
+                  (catalog.RedeLocalCarregada || catalog.RedeAviso.Length > 0 ? "\n" + catalog.RedeResumo : "")
+                : catalog.Error ?? "";
+            Refresh();
+        }
+        catch (Exception ex) { AppPaths.Log("ConsultaSse: recarga da base falhou — " + ex.Message); }
+    });
 
     /// <summary>
     /// "Dados extras" no menu ⚙: o painel é o mesmo usado na página da ferramenta na janela principal.
@@ -136,8 +158,10 @@ public sealed partial class ConsultaSseWindow : Window
             HeaderInfo.Text = catalog.Loaded
                 ? $"{catalog.Cities.Count} cidades · {catalog.TotalWithAccess} com NM · base de {catalog.Generated}"
                 : "base indisponível";
+            // NET-005: além do arquivo da base, de onde veio a lista de NMs (share, variável, pasta)
             SourceText.Text = catalog.Loaded
-                ? "fonte: " + catalog.DataPath
+                ? "fonte: " + catalog.DataPath +
+                  (catalog.RedeLocalCarregada || catalog.RedeAviso.Length > 0 ? "\n" + catalog.RedeResumo : "")
                 : catalog.Error ?? "";
 
             // resumo da base e fonte ficam OCULTOS por padrão; ligados em "Dados extras"

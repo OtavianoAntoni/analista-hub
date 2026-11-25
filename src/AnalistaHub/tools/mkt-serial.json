@@ -26,7 +26,11 @@
     "default": "clipboard",
     "allowed": [ "clipboard", "type", "notify" ],
     "valueLabel": "serial da RB com o sufixo \"1\"",
-    "successLabel": "0 significa: IP não cadastrado no inventário."
+    "successLabel": "0 significa: IP não cadastrado no inventário.",
+    "zeroValue": {
+      "title": "SEM SN",
+      "note": "Não registrado"
+    }
   },
   "credentials": {
     "label": "Inventário",

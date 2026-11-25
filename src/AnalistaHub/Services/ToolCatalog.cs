@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AnalistaHub.Models;
 
 namespace AnalistaHub.Services;
@@ -62,10 +63,19 @@ public sealed class ToolCatalog
     /// exemplos e placeholders). Chave ausente entra em <see cref="LocalConfig.Faltando"/> e o gate
     /// avisa — a ferramenta continua listada, sem estourar.
     /// </summary>
+    private static readonly Regex CfgPlaceholder =
+        new(@"\$\{CFG:([^}]+)\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static void AplicarConfigLocal(ToolManifest tool)
     {
         if (tool.Network is not null)
         {
+            // Guarda a chave ANTES de resolver: a página da ferramenta usa isto para saber qual chave
+            // editar, sem precisar de if por id.
+            var bruto = tool.Network.Host ?? "";
+            var match = CfgPlaceholder.Match(bruto);
+            tool.Network.HostConfigKey = match.Success ? match.Groups[1].Value.Trim() : "";
+
             tool.Network.Label = LocalConfig.Resolve(tool.Network.Label);
             tool.Network.Host = LocalConfig.Resolve(tool.Network.Host);
         }

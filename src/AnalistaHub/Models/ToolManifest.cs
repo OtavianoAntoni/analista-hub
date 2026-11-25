@@ -46,6 +46,20 @@ public sealed class ToolOutput
     public string ValueLabel { get; set; } = "";
     /// <summary>Texto extra no aviso de sucesso.</summary>
     public string SuccessLabel { get; set; } = "";
+
+    /// <summary>
+    /// MKT-001: como apresentar o valor "0". Sem este bloco, "0" segue o comportamento antigo.
+    /// Com ele, o aviso não copia nada, o valor vira o título (ex.: "SEM SN") e a nota vira a
+    /// legenda junto do dado consultado (ex.: "10.0.0.1 · Não registrado").
+    /// </summary>
+    public ZeroValueOutput? ZeroValue { get; set; }
+}
+
+/// <summary>Vocabulário do "sem resultado" declarado pela ferramenta (não hardcode no HUB).</summary>
+public sealed class ZeroValueOutput
+{
+    public string Title { get; set; } = "";
+    public string Note { get; set; } = "";
 }
 
 public sealed class CredentialField
@@ -93,6 +107,14 @@ public sealed class NetworkRequirement
     public string Label { get; set; } = "";
     public string Host { get; set; } = "";
     public int Port { get; set; }
+
+    /// <summary>
+    /// Chave do config.local.json de onde o host veio (ex.: "mkt-serial.host"). Preenchida pelo
+    /// catálogo ANTES de resolver <c>${CFG:...}</c>; a página da ferramenta usa para editar o host
+    /// sem depender do id. Vazia = host fixo no manifesto, sem editor na UI.
+    /// </summary>
+    [JsonIgnore]
+    public string HostConfigKey { get; set; } = "";
 }
 
 /// <summary>

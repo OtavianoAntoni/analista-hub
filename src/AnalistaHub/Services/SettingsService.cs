@@ -40,6 +40,12 @@ public sealed class AppSettings
     /// <summary>Busca rápida: fechar ao clicar fora (padrão ligado — comportamento histórico).</summary>
     public bool HudCloseOnClickOutside { get; set; } = true;
 
+    /// <summary>
+    /// CFG-004 (2.3): o que o clique ESQUERDO no ícone da bandeja faz — "window" (padrão, abre a
+    /// janela principal) ou "search" (abre a busca rápida). Duplo clique espelha esta escolha.
+    /// </summary>
+    public string TrayLeftClickAction { get; set; } = "window";
+
     // ---- ping do destino (NET-001, docs/SUBFERRAMENTA-PING.md) ----
     /// <summary>Espera depois da última tecla antes de pingar o IP do campo (ms).</summary>
     public int PingDebounceMs { get; set; } = 400;
@@ -212,4 +218,13 @@ public static class SettingsService
 
     private static string NormalizeShortcutBehavior(string? behavior) =>
         string.Equals((behavior ?? "").Trim(), "consult", StringComparison.OrdinalIgnoreCase) ? "consult" : "ask";
+
+    /// <summary>
+    /// Ação do clique esquerdo na bandeja (CFG-004): "window" (padrão) ou "search".
+    /// Qualquer valor desconhecido volta ao padrão — nunca deixa o clique sem ação.
+    /// </summary>
+    public static string TrayLeftClickActionFor() =>
+        string.Equals(Current.TrayLeftClickAction?.Trim(), "search", StringComparison.OrdinalIgnoreCase)
+            ? "search"
+            : "window";
 }

@@ -41,6 +41,7 @@ internal static class Native
     public const uint SWP_NOACTIVATE = 0x0010;
     public const uint SWP_NOZORDER = 0x0004;
     [DllImport("user32.dll")] public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int index, IntPtr value);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
     [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
@@ -50,6 +51,10 @@ internal static class Native
     public const int GWL_EXSTYLE = -20;
     public const int GWL_STYLE = -16;
     public const long WS_SYSMENU = 0x00080000L;
+    /// <summary>Borda de redimensionamento (arrastar a quina). Sai no 2.3: tamanho fixo.</summary>
+    public const long WS_THICKFRAME = 0x00040000L;
+    /// <summary>Botão maximizar / Win+↑. Sai no 2.3: tamanho fixo.</summary>
+    public const long WS_MAXIMIZEBOX = 0x00010000L;
     public const uint SWP_FRAMECHANGED = 0x0020;
     public const long WS_EX_TOOLWINDOW = 0x00000080;
     public const int SW_RESTORE = 9;

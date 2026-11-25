@@ -120,6 +120,14 @@ public sealed partial class CommandHud : Window
         catch (Exception ex) { AppPaths.Log("HideHud: " + ex.Message); }
     }
 
+    /// <summary>SQ-005: a casa fecha a busca e invoca a janela principal (focando se já estiver aberta).</summary>
+    private void OnHomeClick(object sender, RoutedEventArgs e)
+    {
+        AppPaths.Log("hud: casa clicada — abrindo a janela principal");
+        HideHud();
+        App.ShowMainWindow();
+    }
+
     private void OnActivated(object sender, WindowActivatedEventArgs args)
     {
         if (args.WindowActivationState == WindowActivationState.Deactivated)
@@ -141,7 +149,7 @@ public sealed partial class CommandHud : Window
                     _boxes.Values.First().Focus(FocusState.Programmatic);
                 else
                     SearchBox.Focus(FocusState.Programmatic);
-                AppPaths.Log("foco aplicado: " + args.WindowActivationState);
+                AppPaths.Log("foco aplicado: " + args.WindowActivationState + " em " + DescreverFoco());
             }
             catch (Exception ex) { AppPaths.Log("foco falhou: " + ex.Message); }
         });
@@ -218,23 +226,40 @@ public sealed partial class CommandHud : Window
         ApplySize();
     }
 
-    /// <summary>Altura acompanha o conteúdo: 2 ferramentas = janela pequena.</summary>
+    /// <summary>
+    /// Altura acompanha o conteúdo. Com a faixa de erro visível a lista de resultados SAI de cena:
+    /// era ela que empurrava a faixa (mensagem de 2 linhas + botões) para fora da janela.
+    /// </summary>
     private void ApplySize()
     {
         try
         {
+            // erro ocupa o lugar da lista, não soma com ela. A row * também precisa zerar: com o filho
+            // colapsado ela continuava reservando o espaço e empurrava a faixa para fora da janela.
+            var comErro = ErrorBanner.Visibility == Visibility.Visible;
+            ResultsList.Visibility = comErro ? Visibility.Collapsed : Visibility.Visible;
+            RootGrid.RowDefinitions[1].Height = comErro
+                ? new GridLength(0)
+                : new GridLength(1, GridUnitType.Star);
+
             double height = 66 + 34; // busca + rodapé
             if (ResultsList.Visibility == Visibility.Visible)
                 height += Math.Clamp(Math.Max(_rows.Count, 1), 1, 8) * 56;
             if (FieldsPanel.Visibility == Visibility.Visible)
-                height += _boxes.Count * 82 + _hints.Count * 18 + 10;
+                height += _boxes.Count * 82 + _hints.Count * 18 + 10 + 46;   // +46 = botão "Consultar"
+
             if (ErrorBanner.Visibility == Visibility.Visible)
-                height += 108;
-            height = Math.Clamp(height, 190, 620);
+            {
+                ErrorBanner.Measure(new Windows.Foundation.Size(WidthDip - 28, double.PositiveInfinity));
+                height += Math.Max(150, ErrorBanner.DesiredSize.Height + 40);
+            }
+
+            height = Math.Clamp(height, 190, 660);
 
             var scale = UiKit.Scale(this);
             AppWindow.Resize(new Windows.Graphics.SizeInt32(
                 (int)Math.Round(WidthDip * scale), (int)Math.Round(height * scale)));
+            AppPaths.Log($"hud: altura {height:0} dip (itens={_rows.Count}, campos={_boxes.Count}, faixa={ErrorBanner.Visibility})");
         }
         catch (Exception ex) { AppPaths.Log("ApplySize: " + ex.Message); }
     }
@@ -349,6 +374,7 @@ public sealed partial class CommandHud : Window
         {
             var box = new TextBox
             {
+                Name = "campo-" + field.Key,
                 Header = field.Label,
                 PlaceholderText = field.Placeholder,
                 FontSize = 14
@@ -441,7 +467,27 @@ public sealed partial class CommandHud : Window
         {
             var first = _boxes.Values.First();
             first.Focus(FocusState.Programmatic);
+            // UX-001: prova objetiva do "campo focado" — o diagnóstico --tool-hotkey lê esta linha.
+            AppPaths.Log($"hud: «{tool.Id}» campos abertos, foco em {DescreverFoco()}");
         }
+    }
+
+    /// <summary>Nome do controle com foco — usado no log de abertura (UX-001).</summary>
+    private string DescreverFoco()
+    {
+        try
+        {
+            var raiz = RootGrid.XamlRoot;
+            var elemento = raiz is null ? null : FocusManager.GetFocusedElement(raiz) as FrameworkElement;
+            return elemento switch
+            {
+                Control c when !string.IsNullOrEmpty(c.Name) => c.Name,
+                Control c => c.GetType().Name,
+                null => "nenhum",
+                _ => elemento.GetType().Name
+            };
+        }
+        catch { return "?"; }
     }
 
     private void UpdateHint(ToolInput field)
@@ -701,7 +747,8 @@ public sealed partial class CommandHud : Window
 
         if (validationError is not null)
         {
-            ShowError(validationError, tool, canRetry: false);
+            // MKT-003: erro de digitação não tem detalhe para copiar nem consulta para repetir.
+            ShowError(validationError, tool, canRetry: false, canCopyDetail: false, showClose: true);
             return;
         }
 
@@ -735,6 +782,17 @@ public sealed partial class CommandHud : Window
         var mode = SettingsService.OutputModeFor(tool.Id, tool.Output.Default);
         var value = result.Value;
 
+        // MKT-001: "sem SN" tem vocabulário próprio e NÃO copia/digita — o clipboard anterior fica
+        // intacto (mesmo princípio do script em falha de rede).
+        if (result.IsZeroComNota(tool))
+        {
+            var titulo = tool.Output.ZeroValue!.Title;
+            var nota = result.ZeroSubtitle(tool, inputs);
+            HideHud();
+            ToastController.ShowSuccess(tool, titulo, nota, "notify", pingLine);
+            return;
+        }
+
         if (mode is not "notify")
         {
             if (!ClipboardService.SetText(value))
@@ -760,6 +818,15 @@ public sealed partial class CommandHud : Window
     {
         var detail = result.Detail;
 
+        // MAC-001: "endereço localmente administrado" é resposta de negócio, não falha técnica — não
+        // existe o que repetir nem detalhe para copiar. O script grafa "Endereco" sem acento.
+        if (!string.IsNullOrWhiteSpace(detail) &&
+            detail.Contains("localmente administrado", StringComparison.OrdinalIgnoreCase))
+        {
+            ShowError(detail, tool, canRetry: false, canCopyDetail: false, showClose: true);
+            return;
+        }
+
         if (tool.Network is not null && !result.TimedOut)
         {
             var reachable = await Probes.CheckTcpAsync(tool.Network.Host, tool.Network.Port, 2500);
@@ -774,7 +841,8 @@ public sealed partial class CommandHud : Window
             tool, canRetry: true);
     }
 
-    private void ShowError(string message, ToolManifest? tool, bool canRetry, bool showProbe = false)
+    private void ShowError(string message, ToolManifest? tool, bool canRetry, bool showProbe = false,
+        bool canCopyDetail = true, bool showClose = false)
     {
         ErrorText.Text = message;
         ErrorBanner.Visibility = Visibility.Visible;
@@ -782,9 +850,15 @@ public sealed partial class CommandHud : Window
         // "Verificar conexão" só quando a falha é de rede. Numa validação (IP/MAC inválido) o botão
         // convidava a testar a VPN por causa de um erro de digitação.
         ProbeButton.Visibility = showProbe ? Visibility.Visible : Visibility.Collapsed;
+        // MKT-003/MAC-001: erro de dado (IP inválido, MAC localmente administrado) não tem o que
+        // copiar nem repetir; sobra a ação de fechar. Falha de execução mantém os dois.
+        CopyDetailButton.Visibility = canCopyDetail ? Visibility.Visible : Visibility.Collapsed;
+        CloseButton.Visibility = showClose ? Visibility.Visible : Visibility.Collapsed;
         StatusText.Text = "";
         ApplySize();
     }
+
+    private void OnCloseErrorClick(object sender, RoutedEventArgs e) => HideHud();
 
     private void SetBusy(bool busy)
     {

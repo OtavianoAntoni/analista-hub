@@ -213,7 +213,11 @@ public static class UiKit
         var monitor = Native.MonitorFromPoint(pt, Native.MONITOR_DEFAULTTONEAREST);
         var info = new Native.MONITORINFO { cbSize = Marshal.SizeOf<Native.MONITORINFO>() };
         if (Native.GetMonitorInfo(monitor, ref info))
+        {
+            AppPaths.Log($"WorkAreaAtCursor: {info.rcWork.Right - info.rcWork.Left}x{info.rcWork.Bottom - info.rcWork.Top}");
             return (info.rcWork.Left, info.rcWork.Top, info.rcWork.Right, info.rcWork.Bottom);
+        }
+        AppPaths.Log("WorkAreaAtCursor: GetMonitorInfo falhou — usando 1920x1080");
         return (0, 0, 1920, 1080);
     }
 

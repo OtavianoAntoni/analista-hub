@@ -25,6 +25,21 @@ public sealed record RunResult(
         if (!string.IsNullOrWhiteSpace(Detail)) return Detail.Trim();
         return string.IsNullOrWhiteSpace(tool.Output.SuccessLabel) ? fallback : tool.Output.SuccessLabel;
     }
+
+    /// <summary>
+    /// MKT-001: "0" com vocabulário declarado no manifesto (`output.zeroValue`). Nesse caso o aviso
+    /// mostra o título da ferramenta e NÃO copia nem digita — o clipboard anterior fica intacto.
+    /// </summary>
+    public bool IsZeroComNota(ToolManifest tool) =>
+        Value.Trim() == "0" && !string.IsNullOrWhiteSpace(tool.Output.ZeroValue?.Title);
+
+    /// <summary>Legenda do "sem resultado": dado consultado + nota (ex.: "10.0.0.1 · Não registrado").</summary>
+    public string ZeroSubtitle(ToolManifest tool, IReadOnlyDictionary<string, string>? inputs = null)
+    {
+        var nota = tool.Output.ZeroValue?.Note ?? "";
+        var entrada = inputs?.Values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? "";
+        return entrada.Length > 0 && nota.Length > 0 ? $"{entrada} · {nota}" : nota;
+    }
 }
 
 /// <summary>

@@ -27,7 +27,8 @@ public static class Cli
         args.Length > 0 && args[0] is "--list-tools" or "--test" or "--probe" or "--version" or "--help"
             or "--set-cred" or "--clear-cred" or "--set-trigger" or "--validate-cred" or "--check-tools"
             or "--try-hotkey" or "--whatsnew" or "--hotkeys" or "--ping" or "--ping-sim"
-            or "--check-update" or "--download-update" or "--apply-update";
+            or "--check-update" or "--download-update" or "--apply-update"
+            or "--set-rede-path" or "--sign-tools" or "--validate-rede" or "--import-rede" or "--search-sse";
 
     public static int Run(string[] args, ToolCatalog catalog)
     {
@@ -57,6 +58,8 @@ public static class Cli
                 output.AppendLine("  AnalistaHub.exe --clear-cred <id>   apaga as credenciais guardadas da ferramenta");
                 output.AppendLine("  AnalistaHub.exe --validate-cred <id> confirma as credenciais no serviço");
                 output.AppendLine("  AnalistaHub.exe --check-tools       valida o catálogo (manifesto, script, campos)");
+                output.AppendLine("  AnalistaHub.exe --sign-tools [--force]  assina os scripts das ferramentas (assinatura local)");
+                output.AppendLine("  AnalistaHub.exe --set-rede-path <pasta> aponta a pasta de dados da equipe (sse-rede)");
                 output.AppendLine("  AnalistaHub.exe --try-hotkey [combo] testa se o Windows libera o atalho global");
                 output.AppendLine("  AnalistaHub.exe --ping <ip> [--count N] [--timeout ms]  pinga o destino (ICMP) e mede");
                 output.AppendLine("  AnalistaHub.exe --ping-sim [--debounce ms]  prova debounce, cancelamento e trava de 100");
@@ -166,6 +169,99 @@ public static class Cli
                 return 0;
             }
 
+            case "--sign-tools":
+            {
+                // SIG-001: diagnóstico e uso pelo instalador. Assina os tools\*.ps1 que mudaram
+                // (ou todos, com --force) e imprime o estado — inclusive o motivo quando não dá.
+                var forcar = args.Contains("--force");
+                var maquina = args.Contains("--machine");
+                var estado = ToolSigning.Ensure(forcar, maquina);
+                output.AppendLine(Json(new
+                {
+                    ok = estado.Status == "ok",
+                    status = estado.Status,
+                    motivo = estado.Motivo,
+                    escopo = estado.Escopo,
+                    politica = estado.Politica,
+                    pode_assinar = estado.PodeAssinar,
+                    thumbprint = estado.Thumbprint,
+                    subject = estado.Subject,
+                    valido_ate = estado.ValidoAte,
+                    pasta = estado.Pasta,
+                    arquivos = estado.Arquivos.Select(a => new { arquivo = a.Arquivo, status = a.Status, motivo = a.Motivo })
+                }, true));
+                Write(output.ToString());
+                return estado.Status == "ok" ? 0 : 1;
+            }
+
+            case "--set-rede-path":
+            {
+                // Instalador (página de destino): grava a pasta de dados da equipe no config.local.json
+                // DESTA máquina, preservando as outras chaves. Sem argumento = remove a chave e volta
+                // para a descoberta automática (NET-005).
+                var valor = (args.ElementAtOrDefault(1) ?? "").Trim();
+                var gravou = LocalConfig.Set("sse-rede.path", valor);
+                output.AppendLine(Json(new
+                {
+                    ok = gravou,
+                    chave = "sse-rede.path",
+                    valor,
+                    arquivo = LocalConfig.FilePath
+                }, true));
+                Write(output.ToString());
+                return gravou ? 0 : 1;
+            }
+
+            case "--validate-rede":
+            case "--import-rede":
+            {
+                // SSE-002 sem UI: valida (e opcionalmente copia) uma lista de NMs. É o mesmo caminho
+                // que o botão da página usa, então serve de prova e de diagnóstico no instalador.
+                var caminho = (args.ElementAtOrDefault(1) ?? "").Trim();
+
+                if (command == "--validate-rede")
+                {
+                    var v = SseCatalog.ValidarRede(caminho);
+                    output.AppendLine(Json(new { ok = v.Ok, cidades = v.Cidades, motivo = v.Motivo, arquivo = caminho }, true));
+                    Write(output.ToString());
+                    return v.Ok ? 0 : 1;
+                }
+
+                var importado = SseCatalog.ImportarRede(caminho, args.Contains("--force"));
+                output.AppendLine(Json(new
+                {
+                    ok = importado.Ok,
+                    cidades = importado.Cidades,
+                    detalhe = importado.Motivo,
+                    arquivo = caminho
+                }, true));
+                Write(output.ToString());
+                return importado.Ok ? 0 : 1;
+            }
+
+            case "--search-sse":
+            {
+                // SSE-001: prova o ranking sem abrir o painel (mesmo SseCatalog.Search da tela).
+                var termo = (args.ElementAtOrDefault(1) ?? "").Trim();
+                var limite = Math.Clamp(IntArg(args, "--limit", 10), 1, 100);
+                var achados = SseCatalog.Current.Search(termo);
+
+                output.AppendLine(Json(new
+                {
+                    termo,
+                    total = achados.Count,
+                    resultados = achados.Take(limite).Select(c => new
+                    {
+                        sigla = c.Sigla,
+                        nome = c.Name,
+                        uf = c.Uf,
+                        nm = c.HasAccess
+                    }).ToList()
+                }, true));
+                Write(output.ToString());
+                return 0;
+            }
+
             case "--check-tools":
             {
                 // --skip-scripts valida só a estrutura do catálogo (base local, campos de credencial)
@@ -227,22 +323,58 @@ public static class Cli
                     .Select(k => $"configuração local ausente: {k} (em {LocalConfig.FilePath})")
                     .ToList();
 
-                // NET-002: lista de NMs apontada na configuração mas inacessível (pasta da rede fora
-                // do ar, OneDrive não sincronizado, caminho digitado errado)
-                var caminhoRede = LocalConfig.Get("sse-rede.path");
-                if (!string.IsNullOrWhiteSpace(caminhoRede))
+                // NET-002/NET-005: lista de NMs. O gate mostra o caminho EFETIVO (o que o app está
+                // usando agora) e o resultado de cada candidato — antes ele só olhava sse-rede.path
+                // e ficava cego para candidatos/variável de ambiente.
+                var sse = SseCatalog.Current;
+                if (sse.RedeLocalCarregada)
                 {
-                    var expandido = Environment.ExpandEnvironmentVariables(caminhoRede.Replace('/', '\\').Trim());
-                    if (!System.IO.File.Exists(expandido))
-                        avisos.Add($"lista de NMs configurada mas inacessível: {expandido}");
+                    avisos.Add($"lista de NMs em uso: {sse.RedeLocalPath} " +
+                               $"({sse.RedeCidades} cidade(s), origem: {sse.RedeLocalOrigem})");
                 }
+                else if (sse.RedeAviso.Length > 0)
+                {
+                    avisos.Add(sse.RedeAviso);
+                }
+
+                foreach (var candidato in sse.RedeOrigens.Where(o => !o.Ok))
+                    avisos.Add($"lista de NMs: {candidato.Origem} → {candidato.Status} " +
+                               $"({candidato.Caminho}{(candidato.Motivo.Length > 0 ? " · " + candidato.Motivo : "")})");
+
+                var rede = new
+                {
+                    carregada = sse.RedeLocalCarregada,
+                    caminho_efetivo = sse.RedeLocalPath,
+                    origem = sse.RedeLocalOrigem,
+                    cidades = sse.RedeCidades,
+                    aviso = sse.RedeAviso,
+                    candidatos = sse.RedeOrigens.Select(o => new
+                    {
+                        origem = o.Origem,
+                        caminho = o.Caminho,
+                        status = o.Status,
+                        motivo = o.Motivo,
+                        cidades = o.Cidades
+                    })
+                };
+
+                // SIG-001: estado da assinatura local das ferramentas. Aqui só LÊ o estado — assinar
+                // reescreve os .ps1 e é papel do --sign-tools / do startup, não do gate.
+                var assinatura = ToolSigning.LerEstado();
+                var statusAssinatura = assinatura?.Status ?? "ausente";
+                if (statusAssinatura is "invalida" or "politica_bloqueia" or "somente_leitura")
+                    avisos.Add($"assinatura das ferramentas: {statusAssinatura} — {assinatura?.Motivo}");
 
                 output.AppendLine(Json(new
                 {
                     ok = problems.Count == 0,
                     ferramentas = catalog.Tools.Count,
                     problemas = problems,
-                    avisos
+                    avisos,
+                    assinatura = statusAssinatura,
+                    assinatura_motivo = assinatura?.Motivo ??
+                        "as ferramentas ainda não foram assinadas nesta máquina (AnalistaHub.exe --sign-tools)",
+                    rede
                 }, true));
 
                 Write(output.ToString());
@@ -368,6 +500,11 @@ public static class Cli
                         ferramenta = tool.Id,
                         tipo = "dataset",
                         base_local = sse.DataPath,
+                        rede_interna = sse.RedeResumo,
+                        rede_caminho = sse.RedeLocalPath,
+                        rede_origem = sse.RedeLocalOrigem,
+                        rede_aviso = sse.RedeAviso,
+                        rede_candidatos = sse.RedeOrigens.Select(o => new { origem = o.Origem, caminho = o.Caminho, status = o.Status, motivo = o.Motivo }),
                         cidades_na_base = sse.Cities.Count,
                         cidades_com_nm = sse.TotalWithAccess,
                         linhas = sse.TotalLines,

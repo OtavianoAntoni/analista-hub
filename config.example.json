@@ -3,9 +3,15 @@
     "Modelo da configuração local do Analista Hub. Copie para %LOCALAPPDATA%\\AnalistaHub\\config.local.json",
     "e preencha os valores desta máquina. O config.local.json NUNCA é versionado (está no .gitignore).",
     "O manifesto das ferramentas usa ${CFG:chave} e o app substitui pelo valor daqui.",
-    "Sem uma chave, a ferramenta continua aparecendo, mas avisa o que falta em --check-tools (campo avisos)."
+    "Sem uma chave, a ferramenta continua aparecendo, mas avisa o que falta em --check-tools (campo avisos).",
+    "As chaves sse-rede.* são OPCIONAIS: sem elas o app procura a lista de NMs sozinho (ver docs/INSTALADOR.md)."
   ],
   "mkt-serial.host": "CHANGEME-host-do-inventario",
   "mkt-serial.url": "http://CHANGEME-host-do-inventario:3113/api/auth_ep",
-  "mkt-serial.cofre": "CHANGEME-caminho-do-cofre-de-credenciais"
+  "mkt-serial.cofre": "CHANGEME-caminho-do-cofre-de-credenciais",
+  "sse-rede.path": "CHANGEME-caminho-do-sse-rede.local.json",
+  "sse-rede.candidatos": [
+    "\\\\CHANGEME-servidor\\CHANGEME-share\\sse-rede.local.json",
+    "%USERPROFILE%\\Documents\\sse-rede.local.json"
+  ]
 }

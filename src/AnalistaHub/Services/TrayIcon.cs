@@ -28,6 +28,7 @@ public sealed class TrayIcon : IDisposable
     private IntPtr _hwnd = IntPtr.Zero;
     private IntPtr _hIcon = IntPtr.Zero;
     private bool _added;
+    private int _ultimoClique;
 
     public event Action? LeftClick;
     public event Action? RightClick;
@@ -115,6 +116,12 @@ public sealed class TrayIcon : IDisposable
             {
                 case Native.WM_LBUTTONUP:
                 case Native.WM_LBUTTONDBLCLK:
+                    // CFG-004: a janela "STATIC" não tem CS_DBLCLKS, então um duplo clique chega
+                    // como DOIS WM_LBUTTONUP. A guarda de 300 ms transforma os dois em uma ação —
+                    // e a ação em si também é idempotente (App.OnTrayLeftClick).
+                    var agora = Environment.TickCount;
+                    if (agora - _ultimoClique < 300) return IntPtr.Zero;
+                    _ultimoClique = agora;
                     try { LeftClick?.Invoke(); } catch (Exception ex) { AppPaths.Log("tray left: " + ex.Message); }
                     return IntPtr.Zero;
 

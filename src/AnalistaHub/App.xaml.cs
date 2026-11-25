@@ -94,10 +94,36 @@ public partial class App : Application
 
         Catalog = ToolCatalog.Load();
 
+        // SIG-001: primeira execução depois de instalar/atualizar assina os tools\*.ps1 — antes de
+        // qualquer ferramenta rodar. Em segundo plano para não atrasar a janela; o resultado vai para
+        // o hub.log e para Configurações → Assinatura local.
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var assinatura = ToolSigning.Ensure();
+                AppPaths.Log($"assinatura local: {assinatura.Status} — {assinatura.Motivo}");
+            }
+            catch (Exception ex) { AppPaths.Log("assinatura local falhou: " + ex.Message); }
+        });
+
         // Primeira execução (ou pasta de dados apagada): o arquivo de configuração local nasce com
         // as chaves que o catálogo pediu, para o usuário só preencher — e a ferramenta já aponta o
         // que falta em vez de falar em "erro de comunicação" (NET-003).
         LocalConfig.EnsureTemplate(LocalConfig.Faltando);
+
+        // NET-005: a descoberta da lista de NMs pode tocar um share (UNC morto pendura File.Exists).
+        // Carrega fora do thread da interface para a janela abrir na hora mesmo com a pasta da equipe
+        // fora do ar; quem precisar da base depois espera o mesmo carregamento (há uma trava só).
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var base_ = SseCatalog.Current;
+                AppPaths.Log($"pré-carga da base: {base_.Cities.Count} cidades — {base_.RedeResumo}");
+            }
+            catch (Exception ex) { AppPaths.Log("pré-carga da base falhou: " + ex.Message); }
+        });
 
         CreateKeeperWindow();
 
@@ -128,8 +154,11 @@ public partial class App : Application
         // atalhos por ferramenta: cada um independente; recusa entra em HotkeyProblems
         ApplyToolHotkeys();
 
-        Tray = new TrayIcon("Analista Hub — clique para buscar, botão direito para abrir o menu");
-        Tray.LeftClick += () => HudController.Toggle();
+        // CFG-004: o clique esquerdo (e o duplo, que chega como dois UP — a janela "STATIC" não tem
+        // CS_DBLCLKS) segue a preferência. A ação é IDEMPOTENTE: abrir a busca não alterna, senão o
+        // duplo clique fecharia o que acabou de abrir.
+        Tray = new TrayIcon(TooltipBandeja());
+        Tray.LeftClick += OnTrayLeftClick;
         Tray.RightClick += () => ShowMainWindow();
         Tray.MenuProvider = BuildTrayMenu;
 
@@ -206,6 +235,25 @@ public partial class App : Application
 
         if (cliArgs.Contains("--arm-hotkey"))
             MainWin.ArmHotkeyCapture();
+
+        // CFG-004: dispara o clique esquerdo da bandeja pelo MESMO caminho de produção, sem tocar no
+        // ícone (o tray não aceita clique sintético de forma confiável).
+        if (cliArgs.Contains("--tray-click"))
+        {
+            After(1500, () =>
+            {
+                AppPaths.Log("diagnóstico: simulando clique esquerdo na bandeja");
+                OnTrayLeftClick();
+            });
+        }
+
+        // Diagnóstico visual: rola a página para provar um bloco abaixo da dobra (ex.: CFG-004).
+        var scrollIdx = Array.IndexOf(cliArgs, "--scroll-y");
+        if (scrollIdx >= 0 && scrollIdx + 1 < cliArgs.Length &&
+            double.TryParse(cliArgs[scrollIdx + 1], out var rolagem))
+        {
+            After(1500, () => MainWin.ScrollContentTo(rolagem));
+        }
 
         // NET-004 / CFG-003: dispara o atalho de uma ferramenta pelo caminho de produção
         // (atalho global por ferramenta), sem teclado sintético.
@@ -376,6 +424,28 @@ public partial class App : Application
     {
         ShowMainWindow();
         MainWin?.NavigateTo(toolId);
+    }
+
+    /// <summary>Tooltip do ícone refletindo a preferência do clique esquerdo (CFG-004).</summary>
+    public static string TooltipBandeja() =>
+        SettingsService.TrayLeftClickActionFor() == "search"
+            ? "Analista Hub — clique esquerdo: abrir busca rápida; botão direito: menu"
+            : "Analista Hub — clique esquerdo: abrir janela principal; botão direito: menu";
+
+    /// <summary>
+    /// Clique esquerdo (e duplo) na bandeja. Idempotente de propósito: "busca rápida" abre/foca a
+    /// HUD, nunca alterna. O duplo clique dispara este método duas vezes e o resultado é o mesmo.
+    /// </summary>
+    private static void OnTrayLeftClick()
+    {
+        try
+        {
+            var acao = SettingsService.TrayLeftClickActionFor();
+            AppPaths.Log($"tray: clique esquerdo — ação={acao}");
+            if (acao == "search") Views.HudController.Show();
+            else ShowMainWindow();
+        }
+        catch (Exception ex) { AppPaths.Log("tray clique esquerdo: " + ex.Message); }
     }
 
     public static void ExitApp()
@@ -593,6 +663,14 @@ public partial class App : Application
 
         if (resultado.Ok)
         {
+            // MKT-001: "sem SN" não copia nada; o clipboard anterior fica intacto.
+            if (resultado.IsZeroComNota(tool))
+            {
+                Views.ToastController.ShowSuccess(tool, tool.Output.ZeroValue!.Title,
+                    resultado.ZeroSubtitle(tool, entradas), "notify");
+                return;
+            }
+
             ClipboardService.SetText(resultado.Value);
 
             // NET-004: o cartão já diz "copiado para a área de transferência" no contexto — repetir
