@@ -3,7 +3,7 @@
 > Formato: o resumo conta o que mudou para quem usa; o detalhamento fica separado por
 > **Adicionados**, **Corrigido** e **Removidos**. Cada item diz como foi verificado.
 
-## 2.3.0 — em preparação (não publicado)
+## 2.3.0 — 25/11/2026
 
 **Resumo.** Três entregas que tiram trabalho manual de quem instala e de quem usa o HUB em máquina de
 terceiro: (1) um **instalador `.exe`** com o wizard padrão do Windows, que baixa o pacote publicado,
@@ -104,6 +104,16 @@ quebrava a atualização diária que hoje funciona no portátil. O efeito colate
   "nenhum precisava"; arquivo alterado à mão foi reassinado sozinho; `--sign-tools` com política
   `Restricted` devolve `politica_bloqueia` (exit 1) sem tentar assinar; `ExportPolicy=None` e
   `ExportParameters` recusado (chave não exportável).
+- **Instalador 2.3.0** — release `v2.3.0` publicada pelo workflow (tag → publish → gate → Setup →
+  release). Setup baixado do release com `sha256` conferido
+  (`053a60ed7cfa92954bd753b63cd107ecaed0a072f8eb7bb0ad6e43249c4b47f1`) e instalado em silêncio
+  (`/S /D=<pasta>`): download de **86.213.904 bytes** conferido contra o manifesto, `tar` exit 0,
+  `AnalistaHub.exe` presente com versão `2.3.0+dc3e81b`, atalho no Menu Iniciar; o desinstalador
+  removeu pasta e atalho.
+- **Bug do download corrigido no caminho** — o `Rodar` do `.nsi` devolve a **saída** do comando, não
+  o código de saída; o loop comparava a mensagem do `curl` (`curl: (28) …`) com `"28"` e abortava na
+  primeira transferência parcial, sempre com "download incompleto". `RodarCodigo` passou a devolver o
+  código (e a saída vai para `%TEMP%\AnalistaHub-Setup.log`).
 - Script novo sob `-ExecutionPolicy AllSigned`: **PSSecurityException** antes de assinar, roda depois
   (`script executou`).
 - **PKG-001** — `check-icon.ps1` no `dist` 2.2.1: `cores=24, ok=false` (exit 1, ícone genérico); no
