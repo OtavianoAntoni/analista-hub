@@ -37,6 +37,21 @@ $tools = Join-Path $env:LOCALAPPDATA 'AnalistaHub\buildtools'
 $nsisDir = Join-Path $tools 'nsis'
 $makensis = Get-ChildItem $nsisDir -Filter makensis.exe -Recurse -ErrorAction SilentlyContinue |
     Select-Object -First 1
+
+# NSIS já instalado na máquina (choco no CI, instalador manual, PATH): usa antes de baixar o portátil.
+if (-not $makensis)
+{
+    $cmd = Get-Command makensis.exe -ErrorAction SilentlyContinue
+    if ($cmd) { $makensis = Get-Item $cmd.Source }
+}
+if (-not $makensis)
+{
+    foreach ($p in @("$env:ProgramFiles\NSIS\makensis.exe", "${env:ProgramFiles(x86)}\NSIS\makensis.exe"))
+    {
+        if (Test-Path $p) { $makensis = Get-Item $p; break }
+    }
+}
+
 if (-not $makensis -and -not $NoDownload)
 {
     Write-Host "== baixando NSIS 3.10 portátil para $nsisDir"

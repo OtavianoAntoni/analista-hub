@@ -64,6 +64,12 @@ jobs:
           if ((Get-Item $zip).Length -ne $asset.size) { throw "tamanho do manifesto nao confere" }
           Write-Host "ok: $($json.version) · $([math]::Round($asset.size/1MB,1)) MB · $hash"
 
+      - name: Instalar NSIS
+        shell: pwsh
+        # O download portátil no SourceForge é instável no runner; o NSIS do chocolatey é fixo e o
+        # build-installer.ps1 procura makensis.exe no PATH e nos caminhos padrão antes de baixar.
+        run: choco install nsis --no-progress -y
+
       - name: Gerar o instalador (.exe)
         shell: pwsh
         # O Setup é gerado DEPOIS do zip: ele recebe a url/sha256/size do manifesto recém-gerado, então
