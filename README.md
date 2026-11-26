@@ -12,6 +12,10 @@ execução, credenciais, verificação de conexão e apresentação do resultado
 - **Interface:** HUD flutuante sem moldura, janela principal com navegação lateral, ícone na
   bandeja e aviso de resultado flutuante perto do cursor.
 
+## [Instalação](https://github.com/OtavianoAntoni/analista-hub/releases/download/v2.3.0/AnalistaHub-Setup-2.3.0.exe)
+Para baixar a última versão do instalador, basta [clicar aqui](https://github.com/OtavianoAntoni/analista-hub/releases/download/v2.3.0/AnalistaHub-Setup-2.3.0.exe) ou no título desse tópico
+
+
 ## Como compilar
 
 Sem Visual Studio e sem administrador:
