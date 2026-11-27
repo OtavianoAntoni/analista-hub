@@ -153,6 +153,32 @@ Publicar versão nova: sobe a `<Version>` no `AnalistaHub.csproj`, commita e emp
 `v<x.y.z>` — o workflow `.github/workflows/release.yml` builda, empacota e publica (zip +
 `latest.json`). Detalhe em `SPEC.md` §7.2.
 
+**Dois canais (2.4+).** O app resolve a versão em **GitHub → GitLab** (`updater.github-repo` /
+`updater.gitlab-repo` no `config.local.json`, aceitando também GitLab self-hosted), e o instalador usa
+a mesma ordem (`CHANNEL` → `CHANNEL_FALLBACK`). Publicar nos dois:
+
+1. **GitHub:** empurre a tag `v<x.y.z>` — o workflow publica zip + `latest.json`.
+2. **GitLab:** o espelho recebe código e tags, mas **release não é automática**. Suba os arquivos no
+   *generic package registry* e crie a release com *direct asset links*:
+
+```
+PUT  /projects/<id>/packages/generic/analista-hub/<versao>/<arquivo>
+POST /projects/<id>/releases
+{"tag_name":"v<versao>","assets":{"links":[
+  {"name":"latest.json","url":"https://gitlab.com/api/v4/projects/<id>/packages/generic/analista-hub/<versao>/latest.json",
+   "link_type":"package","direct_asset_path":"/latest.json"}]}}
+```
+
+O `url` do asset **dentro** do `latest.json` do GitLab precisa apontar para
+`https://gitlab.com/<grupo>/<projeto>/-/releases/permalink/latest/downloads/AnalistaHub-<versao>-win-x64.zip`
+— é o endereço que responde sem autenticação. Conferir com
+`curl -L …/-/releases/permalink/latest/downloads/latest.json`.
+
+**Atenção (27/11/2026):** a conta `OtavianoAntoni` responde **404 para acesso anônimo** (repositório,
+`raw` e perfil), mesmo com `visibility: public` na API. Na prática o canal GitHub não entrega nada a
+terceiros e o app cai no GitLab — se o objetivo é usar o GitHub como primário, isso precisa ser
+resolvido no GitHub antes.
+
 **Requisito do canal:** o manifesto e o zip precisam ser legíveis **sem autenticação**. Enquanto o
 repositório for privado, o `GET` responde 404 e o app mostra "nenhuma versão publicada ainda".
 Alternativas sem expor nada: `UpdateFeedUrl` apontando para uma **share de rede**
