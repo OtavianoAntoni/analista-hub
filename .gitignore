@@ -10,6 +10,10 @@ dist/
 *.log
 cli-last.json
 
+# pastas locais que NUNCA devem ser versionadas (vault pessoal e sessões do agente)
+.hermes/
+Cofre Obsidian/
+
 # backups/artefatos locais (não versionar)
 *.zip
 
