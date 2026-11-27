@@ -48,6 +48,18 @@ public sealed class ToolOutput
     public string SuccessLabel { get; set; } = "";
 
     /// <summary>
+    /// MKT-004: não repetir o nome da ferramenta como título do card de resultado — o valor exibido
+    /// já diz o que é. Padrão falso: o título continua aparecendo nas outras ferramentas.
+    /// </summary>
+    public bool HideTitle { get; set; }
+
+    /// <summary>
+    /// MKT-004: sufixo do valor que recebe a cor de destaque (no SN da RB, o "1" somado pelo script).
+    /// Vazio = nada é destacado.
+    /// </summary>
+    public string? HighlightSuffix { get; set; }
+
+    /// <summary>
     /// MKT-001: como apresentar o valor "0". Sem este bloco, "0" segue o comportamento antigo.
     /// Com ele, o aviso não copia nada, o valor vira o título (ex.: "SEM SN") e a nota vira a
     /// legenda junto do dado consultado (ex.: "10.0.0.1 · Não registrado").
@@ -128,7 +140,13 @@ public sealed class ToolManifest
     public string Category { get; set; } = "Geral";
     public string Description { get; set; } = "";
     public string LongDescription { get; set; } = "";
-    /// <summary>Glifo Segoe MDL2 Assets, ex.: "\uE968".</summary>
+    /// <summary>
+    /// Ícone da ferramenta (regra R10), em duas formas:
+    ///   <c>"material:router"</c> — nome na fonte do Google empacotada com o app (padrão);
+    ///   <c>"\uE968"</c>          — glifo do sistema (Segoe MDL2/Fluent), forma legada;
+    ///   <c>"nome.ico"</c>        — arquivo de imagem ao lado do manifesto.
+    /// Trocar o ícone é editar esta linha: nenhum código muda.
+    /// </summary>
     public string Icon { get; set; } = "\uE8A7";
     /// <summary>script (executa um programa) | dataset (consulta uma base local, sem processo).</summary>
     public string Kind { get; set; } = "script";
@@ -209,9 +227,8 @@ public sealed class ToolManifest
     public bool DatasetExists => !string.IsNullOrWhiteSpace(ExpandedDataset) && System.IO.File.Exists(ExpandedDataset);
 
     /// <summary>
-    /// Ícone: glifo Segoe MDL2 Assets (padrão, ex.: "\\uE968") **ou** arquivo de imagem (.ico/.png)
-    /// que mora ao lado do manifesto (regra R10). Trocar o ícone de uma ferramenta = colocar o
-    /// arquivo em tools/ e apontar aqui; nenhum código muda.
+    /// Ícone por arquivo (.ico/.png) que mora ao lado do manifesto (regra R10). Trocar o ícone de
+    /// uma ferramenta = colocar o arquivo em tools/ e apontar aqui; nenhum código muda.
     /// </summary>
     [JsonIgnore]
     public bool IconIsFile =>
@@ -240,7 +257,23 @@ public sealed class ToolManifest
 
     [JsonIgnore] public bool IconFileExists => IconIsFile && File.Exists(ExpandedIconFile);
 
-    [JsonIgnore] public string IconGlyph => IconIsFile || string.IsNullOrEmpty(Icon) ? "\uE8A7" : Icon;
+    /// <summary>Ícone pedido pelo nome na fonte do Google: <c>"material:router"</c>.</summary>
+    [JsonIgnore] public bool IconIsMaterial => MaterialIcons.TemPrefixo(Icon);
+
+    /// <summary>Nome do ícone Material, sem o prefixo ("material:router" → "router").</summary>
+    [JsonIgnore] public string IconMaterialName => MaterialIcons.Nome(Icon);
+
+    /// <summary>Glifo pronto para desenhar. Ícone Material resolve pelo mapa da fonte.</summary>
+    [JsonIgnore]
+    public string IconGlyph
+    {
+        get
+        {
+            if (IconIsFile) return MaterialIcons.GlifoReserva;
+            if (IconIsMaterial) return MaterialIcons.Glifo(IconMaterialName);
+            return string.IsNullOrEmpty(Icon) ? MaterialIcons.GlifoReserva : Icon;
+        }
+    }
 
     /// <summary>
     /// Rótulo do histórico: os valores na ordem dos campos, com os campos marcados

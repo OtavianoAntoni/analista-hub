@@ -33,8 +33,41 @@ public static class UiKit
             appWindow.SetPresenter(presenter);
             if (hideFromAltTab) appWindow.IsShownInSwitchers = false;
             ApplyChrome(window, round: true);
+            TrimFrame(window);
         }
         catch (Exception ex) { AppPaths.Log("MakeHudWindow: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// UI-005 — a "outline branca" em volta da busca rápida e das janelas das ferramentas.
+    ///
+    /// Não é borda de XAML: o Windows desenha uma moldura clara de 1px (3px a 125%) na área não
+    /// cliente de toda janela sem título. No Windows 11 isso se resolve com DWMWA_BORDER_COLOR; no
+    /// Windows 10 esse atributo não existe, então a saída é recortar a janela no retângulo do
+    /// cliente — a moldura deixa de ser pintada e o conteúdo encosta na borda visível.
+    ///
+    /// Precisa ser chamado DEPOIS de cada redimensionamento (a região é em pixels da janela).
+    /// </summary>
+    public static void TrimFrame(Window window)
+    {
+        try
+        {
+            var hwnd = Hwnd(window);
+            if (!Native.GetWindowRect(hwnd, out var janela)) return;
+            if (!Native.GetClientRect(hwnd, out var cliente)) return;
+            if (cliente.Right < 16 || cliente.Bottom < 16) return;
+
+            // moldura simétrica: o cliente começa no meio da diferença entre janela e cliente
+            var dx = (janela.Right - janela.Left - cliente.Right) / 2;
+            var dy = (janela.Bottom - janela.Top - cliente.Bottom) / 2;
+            if (dx <= 0 && dy <= 0) return;   // já sem moldura (Windows 11)
+
+            var regiao = Native.CreateRectRgn(dx, dy, dx + cliente.Right, dy + cliente.Bottom);
+            if (regiao == IntPtr.Zero) return;
+            // SetWindowRgn assume a região em caso de sucesso; só liberamos quando ele recusa
+            if (Native.SetWindowRgn(hwnd, regiao, true) == 0) Native.DeleteObject(regiao);
+        }
+        catch (Exception ex) { AppPaths.Log("TrimFrame: " + ex.Message); }
     }
 
     /// <summary>Cartão de conteúdo: branco no claro, grafite no escuro.</summary>
@@ -67,6 +100,14 @@ public static class UiKit
     public static Windows.UI.Color Bad => EffectiveLight
         ? Windows.UI.Color.FromArgb(255, 0xB4, 0x23, 0x2C)
         : Windows.UI.Color.FromArgb(255, 0xE8, 0x7A, 0x7A);
+
+    /// <summary>
+    /// MKT-004: cor de destaque do sufixo do valor (o "1" do SN). Laranja com contraste AA nos dois
+    /// temas — no claro escurece, no escuro clareia.
+    /// </summary>
+    public static Windows.UI.Color Suffix => EffectiveLight
+        ? Windows.UI.Color.FromArgb(255, 0xA8, 0x53, 0x00)
+        : Windows.UI.Color.FromArgb(255, 0xF5, 0xA6, 0x23);
 
     public static Windows.UI.Color Unknown => EffectiveLight
         ? Windows.UI.Color.FromArgb(255, 0x55, 0x55, 0x55)
@@ -231,6 +272,7 @@ public static class UiKit
         var x = left + Math.Max(0, (right - left - w) / 2);
         var y = top + (int)Math.Round((bottom - top) * 0.12);
         window.AppWindow.MoveAndResize(new RectInt32(x, y, w, h));
+        TrimFrame(window);
     }
 
     public static void PlaceHud(Window window, double widthDip, double heightDip, int x, int y)
@@ -238,6 +280,7 @@ public static class UiKit
         var scale = Scale(window);
         window.AppWindow.MoveAndResize(new RectInt32(x, y,
             (int)Math.Round(widthDip * scale), (int)Math.Round(heightDip * scale)));
+        TrimFrame(window);
     }
 
     /// <summary>Aviso: perto do cursor, preso à área útil do monitor.</summary>
@@ -254,6 +297,7 @@ public static class UiKit
         x = Math.Max(x, left + 8);
         y = Math.Max(y, top + 8);
         window.AppWindow.MoveAndResize(new RectInt32(x, y, w, h));
+        TrimFrame(window);
     }
 
     public static void PlaceBottomRight(Window window, double widthDip, double heightDip)

@@ -32,6 +32,10 @@ ${Using:StrFunc} StrStr
 !ifndef CHANNEL
   !define CHANNEL "https://github.com/OtavianoAntoni/analista-hub/releases/latest/download/latest.json"
 !endif
+; UPD-002: mesmo fallback do aplicativo — se o GitHub não responder, o instalador usa o espelho.
+!ifndef CHANNEL_FALLBACK
+  !define CHANNEL_FALLBACK "https://gitlab.com/otavianoantoni/analista-hub/-/releases/permalink/latest/downloads/latest.json"
+!endif
 ; Quando o build conhece o pacote (CI ou teste local), estes valores evitam a consulta ao canal.
 ; Vazios = consulta latest.json em tempo de instalação.
 !ifndef ASSET_URL
@@ -71,6 +75,8 @@ Var UrlPacote
 Var VersaoCanal
 Var HashEsperado
 Var BytesEsperados
+Var CanalAtual          ; canal sendo tentado agora
+Var CanalUsado          ; canal que entregou o pacote (vai para o log)
 Var ZipPath
 Var InstaladoVersao
 Var FalhouDownload
@@ -434,19 +440,10 @@ FunctionEnd
 
 ; ------------------------------------------------------------------ canal
 
-Function LerCanal
-  StrCpy $VersaoCanal "${VERSION}"
-  StrCpy $UrlPacote "${ASSET_URL}"
-  StrCpy $HashEsperado "${ASSET_SHA256}"
-  StrCpy $BytesEsperados ${ASSET_SIZE}
-
-  ; build sem pacote conhecido: lê o manifesto do canal
-  ${If} $UrlPacote != ""
-    Return
-  ${EndIf}
-
+; Baixa e interpreta o manifesto de $CanalAtual. Deixa $UrlPacote vazio quando falha.
+Function LerManifesto
   Delete "$PLUGINSDIR\latest.json"
-  Push '"$SYSDIR\curl.exe" -sS -L --max-time 30 --retry 1 -o "$PLUGINSDIR\latest.json" "${CHANNEL}"'
+  Push '"$SYSDIR\curl.exe" -sS -L --max-time 30 --retry 1 -o "$PLUGINSDIR\latest.json" "$CanalAtual"'
     Call Rodar
     Pop $0
   ${IfNot} ${FileExists} "$PLUGINSDIR\latest.json"
@@ -497,6 +494,39 @@ Function LerCanal
   ${EndIf}
 FunctionEnd
 
+Function LerCanal
+  StrCpy $VersaoCanal "${VERSION}"
+  StrCpy $UrlPacote "${ASSET_URL}"
+  StrCpy $HashEsperado "${ASSET_SHA256}"
+  StrCpy $BytesEsperados ${ASSET_SIZE}
+
+  ; build sem pacote conhecido: lê o manifesto do canal
+  ${If} $UrlPacote != ""
+    StrCpy $CanalUsado "pacote embutido no build"
+    Return
+  ${EndIf}
+
+  ; Primário (GitHub) → fallback (GitLab), na mesma ordem do aplicativo.
+  StrCpy $CanalAtual "${CHANNEL}"
+  StrCpy $CanalUsado "${CHANNEL}"
+  Call LerManifesto
+
+  ${If} $UrlPacote == ""
+    Push "canal: primario falhou, tentando fallback ${CHANNEL_FALLBACK}"
+    Call EscreverLog
+    Pop $R9
+
+    StrCpy $CanalAtual "${CHANNEL_FALLBACK}"
+    Call LerManifesto
+    ${If} $UrlPacote != ""
+      StrCpy $CanalUsado "${CHANNEL_FALLBACK}"
+      Push "canal: pacote obtido no fallback $CanalUsado"
+      Call EscreverLog
+      Pop $R9
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
 ; ------------------------------------------------------------------ seções
 
 Section "Aplicativo (obrigatório)" SecApp
@@ -506,12 +536,12 @@ Section "Aplicativo (obrigatório)" SecApp
     Call LerCanal
   ${EndIf}
   ${If} $UrlPacote == ""
-    Push "ERRO: canal sem pacote (${CHANNEL})"
+    Push "ERRO: nenhum canal com pacote (${CHANNEL} | ${CHANNEL_FALLBACK})"
     Call EscreverLog
     Pop $R9
     Abort "Não foi possível descobrir o pacote no canal."
   ${EndIf}
-  Push "canal: versao=$VersaoCanal url=$UrlPacote sha256=$HashEsperado tamanho=$BytesEsperados"
+  Push "canal: origem=$CanalUsado versao=$VersaoCanal url=$UrlPacote sha256=$HashEsperado tamanho=$BytesEsperados"
   Call EscreverLog
   Pop $R9
 

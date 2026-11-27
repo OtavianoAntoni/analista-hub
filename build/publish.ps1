@@ -72,6 +72,19 @@ if (Test-Path $patchSrc)
     Write-Host "== PATCHLOG.md incluído no pacote"
 }
 
+# UPD-003: o resumo para o usuário final, exibido sozinho no 1º início após atualizar. Vai junto
+# porque o app lê o arquivo ao lado do executável (PatchNotes.PublicSectionFor).
+$publicSrc = Join-Path $root 'CHANGELOG_PUBLIC.md'
+if (Test-Path $publicSrc)
+{
+    Copy-Item $publicSrc (Join-Path $outDir 'CHANGELOG_PUBLIC.md') -Force
+    Write-Host "== CHANGELOG_PUBLIC.md incluído no pacote"
+}
+else
+{
+    Write-Host "== AVISO: CHANGELOG_PUBLIC.md ausente — o aviso de 'o que mudou' cairá no PATCHLOG técnico"
+}
+
 # Higiene do pacote: artefatos de runtime que o app cria em tools/ (cache de token = JWT de sessão,
 # cache de OUI, logs, backups) NUNCA podem viajar no zip do release. Se o build copiou algum da
 # pasta de origem, sai aqui — antes da contagem.

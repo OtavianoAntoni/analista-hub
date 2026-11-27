@@ -23,11 +23,27 @@ namespace AnalistaHub.Services;
 /// </summary>
 public static class UpdateService
 {
-    public const string DefaultFeedUrl =
-        "https://github.com/OtavianoAntoni/analista-hub/releases/latest/download/latest.json";
+    /// <summary>Canal primário embutido — sobrescrevível por <c>updater.github-repo</c>.</summary>
+    public const string DefaultGitHubRepo = "https://github.com/OtavianoAntoni/analista-hub";
+
+    /// <summary>Canal de fallback embutido — aceita GitLab self-hosted no <c>config.local.json</c>.</summary>
+    public const string DefaultGitLabRepo = "https://gitlab.com/otavianoantoni/analista-hub";
+
+    /// <summary>Chaves de configuração local (mesmo padrão de <c>MKT-002</c>: default no build, override na máquina).</summary>
+    public const string GitHubRepoKey = "updater.github-repo";
+    public const string GitLabRepoKey = "updater.gitlab-repo";
+
+    /// <summary>Endereço do manifesto no canal primário embutido.</summary>
+    public const string DefaultFeedUrl = DefaultGitHubRepo + "/releases/latest/download/latest.json";
 
     /// <summary>Variável de ambiente que troca o canal (usada nos testes, com servidor local).</summary>
     public const string FeedEnvVar = "ANALISTAHUB_UPDATE_FEED";
+
+    /// <summary>
+    /// Só para teste: cadeia inteira separada por ';'. Existe para provar o fallback sem editar o
+    /// <c>config.local.json</c> da máquina de quem trabalha.
+    /// </summary>
+    public const string ChannelsEnvVar = "ANALISTAHUB_UPDATE_CHANNELS";
 
     public const string AssetKey = "win-x64";
 
@@ -43,16 +59,59 @@ public static class UpdateService
     public static string CurrentVersion =>
         typeof(App).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
-    public static string FeedUrl
+    /// <summary>Canal efetivo (o primeiro da cadeia) — usado em telas e diagnóstico.</summary>
+    public static string FeedUrl => Channels()[0].FeedUrl;
+
+    /// <summary>
+    /// Cadeia de canais: o primeiro que resolver a release vale. Ordem:
+    /// ambiente (teste) → URL única das Configurações (legado) → GitHub → GitLab.
+    /// Cada canal aceita URL de repositório OU URL de manifesto/pasta.
+    /// </summary>
+    public static IReadOnlyList<UpdateChannel> Channels()
     {
-        get
+        var cadeia = Environment.GetEnvironmentVariable(ChannelsEnvVar);
+        if (!string.IsNullOrWhiteSpace(cadeia))
+            return cadeia.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select((feed, i) => new UpdateChannel($"canal {i + 1}", feed))
+                .ToArray();
+
+        var env = Environment.GetEnvironmentVariable(FeedEnvVar);
+        if (!string.IsNullOrWhiteSpace(env))
+            return new[] { new UpdateChannel("ambiente", env.Trim()) };
+
+        var configured = SettingsService.Current.UpdateFeedUrl;
+        if (!string.IsNullOrWhiteSpace(configured))
+            return new[] { new UpdateChannel("configurado", configured.Trim()) };
+
+        return new[]
         {
-            var env = Environment.GetEnvironmentVariable(FeedEnvVar);
-            if (!string.IsNullOrWhiteSpace(env)) return env.Trim();
-            var configured = SettingsService.Current.UpdateFeedUrl;
-            return string.IsNullOrWhiteSpace(configured) ? DefaultFeedUrl : configured.Trim();
-        }
+            new UpdateChannel("GitHub", FeedFor(LocalConfig.Get(GitHubRepoKey), DefaultGitHubRepo, gitlab: false)),
+            new UpdateChannel("GitLab", FeedFor(LocalConfig.Get(GitLabRepoKey), DefaultGitLabRepo, gitlab: true))
+        };
     }
+
+    /// <summary>
+    /// Três formas aceitas: (a) manifesto/pasta — termina em <c>.json</c>, <c>file://</c>, UNC ou unidade;
+    /// (b) repositório → monta o endereço do manifesto da última release; (c) vazio → default embutido.
+    /// </summary>
+    private static string FeedFor(string configured, string fallbackRepo, bool gitlab)
+    {
+        var raw = string.IsNullOrWhiteSpace(configured) ? fallbackRepo : configured.Trim();
+        if (LooksLikeFeed(raw)) return raw;
+
+        var repo = raw.TrimEnd('/');
+        // GitLab: permalink da última release (funciona em self-hosted, sem API e sem token)
+        return gitlab
+            ? repo + "/-/releases/permalink/latest/downloads/latest.json"
+            : repo + "/releases/latest/download/latest.json";
+    }
+
+    private static bool LooksLikeFeed(string value) =>
+        value.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ||
+        value.StartsWith("file://", StringComparison.OrdinalIgnoreCase) ||
+        value.StartsWith(@"\\", StringComparison.Ordinal) ||
+        (value.Length >= 3 && char.IsLetter(value[0]) && value[1] == ':' &&
+         (value[2] == '\\' || value[2] == '/'));
 
     public static bool CheckDue(TimeSpan interval)
     {
@@ -67,21 +126,49 @@ public static class UpdateService
     {
         var current = CurrentVersion;
         var now = DateTimeOffset.UtcNow;
+        var canais = Channels();
+        var falhas = new List<string>();
+
+        // UPD-002: cada canal é tentado em ordem; o primeiro que resolver a release vale. "Falha" é
+        // rede/DNS/timeout, 4xx-5xx (429 incluso), manifesto inválido ou pacote sem hash publicado.
+        for (var i = 0; i < canais.Count; i++)
+        {
+            var canal = canais[i];
+            var (resultado, motivo) = await TryCheckChannelAsync(canal, current, now, ct);
+
+            if (resultado is not null)
+            {
+                if (falhas.Count > 0)
+                    AppPaths.Log($"update: release resolvida no canal de fallback «{canal.Name}»");
+                return resultado;
+            }
+
+            falhas.Add($"{canal.Name}: {motivo}");
+            AppPaths.Log($"update: canal «{canal.Name}» falhou — {motivo}" +
+                         (i < canais.Count - 1 ? "; tentando o próximo" : ""));
+        }
+
+        return new UpdateCheck
+        {
+            Ok = false, CurrentVersion = current, CheckedAtUtc = now,
+            Error = "Não foi possível verificar atualizações. " + string.Join(" · ", falhas)
+        };
+    }
+
+    /// <summary>Uma tentativa em um canal. Resultado nulo = falha, com o motivo para o log e a tela.</summary>
+    private static async Task<(UpdateCheck? Result, string? Motivo)> TryCheckChannelAsync(
+        UpdateChannel canal, string current, DateTimeOffset now, CancellationToken ct)
+    {
         try
         {
-            var feed = FeedUrl;
+            var feed = canal.FeedUrl;
             string json;
 
             // Canal em pasta (share de rede, %LOCALAPPDATA%, unidade mapeada): nada precisa ser
             // público. É o caminho natural em rede corporativa — o CI/analista copia a pasta lá.
             if (TryResolveLocal(feed, out var feedPath))
             {
-                if (!File.Exists(feedPath))
-                    return new UpdateCheck
-                    {
-                        Ok = true, CurrentVersion = current, CheckedAtUtc = now,
-                        Message = $"O canal de atualização não existe em {feedPath}."
-                    };
+                if (!File.Exists(feedPath)) return (null, $"canal não existe em {feedPath}");
                 json = await File.ReadAllTextAsync(feedPath, ct);
             }
             else
@@ -90,74 +177,49 @@ public static class UpdateService
                 using var resp = await http.GetAsync(feed, HttpCompletionOption.ResponseHeadersRead, ct);
 
                 if (resp.StatusCode == HttpStatusCode.NotFound)
-                    return new UpdateCheck
-                    {
-                        Ok = true, CurrentVersion = current, CheckedAtUtc = now,
-                        Message = "O canal de atualização respondeu 404 — nenhuma versão publicada ainda. " +
-                                  "Se o repositório for privado, o app não consegue ler as releases."
-                    };
-
+                    return (null, "HTTP 404 — nenhuma versão publicada nesse canal");
                 if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden)
-                    return new UpdateCheck
-                    {
-                        Ok = false, CurrentVersion = current, CheckedAtUtc = now,
-                        Error = "O canal de atualização recusou o acesso (HTTP " + (int)resp.StatusCode +
-                                "). Repositório privado exige token — este app não guarda token."
-                    };
+                    return (null, $"acesso recusado (HTTP {(int)resp.StatusCode}) — repositório privado exige token");
+                if ((int)resp.StatusCode == 429)
+                    return (null, "limite de requisições (HTTP 429)");
+                if (!resp.IsSuccessStatusCode)
+                    return (null, $"HTTP {(int)resp.StatusCode}");
 
-                resp.EnsureSuccessStatusCode();
                 json = await resp.Content.ReadAsStringAsync(ct);
             }
 
             var manifest = JsonSerializer.Deserialize<UpdateManifest>(json, JsonOptions);
             if (manifest is null || string.IsNullOrWhiteSpace(manifest.Version))
-                return new UpdateCheck
-                {
-                    Ok = false, CurrentVersion = current, CheckedAtUtc = now,
-                    Error = "Manifesto de atualização inválido (sem campo \"version\")."
-                };
+                return (null, "manifesto inválido (sem campo \"version\")");
 
             var latest = Normalize(manifest.Version);
             if (!IsNewer(latest, current))
-                return new UpdateCheck
+                return (new UpdateCheck
                 {
-                    Ok = true, CurrentVersion = current, LatestVersion = latest, CheckedAtUtc = now,
+                    Ok = true, Channel = canal.Name, ChannelFeed = feed, CurrentVersion = current,
+                    LatestVersion = latest, CheckedAtUtc = now,
                     Message = $"Você está na versão mais recente ({current})."
-                };
+                }, null);
 
             var asset = PickAsset(manifest);
             if (asset is null)
-                return new UpdateCheck
-                {
-                    Ok = false, CurrentVersion = current, LatestVersion = latest, Notes = manifest.Notes,
-                    CheckedAtUtc = now,
-                    Error = $"A versão {latest} foi publicada sem pacote para {AssetKey}."
-                };
+                return (null, $"versão {latest} publicada sem pacote para {AssetKey}");
 
             if (string.IsNullOrWhiteSpace(asset.Sha256))
-                return new UpdateCheck
-                {
-                    Ok = false, CurrentVersion = current, LatestVersion = latest, Notes = manifest.Notes,
-                    CheckedAtUtc = now,
-                    Error = $"O pacote da versão {latest} não publicou o SHA-256; download recusado por segurança."
-                };
+                return (null, $"versão {latest} sem SHA-256 publicado — download recusado por segurança");
 
-            AppPaths.Log($"update: versão {latest} disponível (instalada {current})");
-            return new UpdateCheck
+            AppPaths.Log($"update: canal «{canal.Name}» — versão {latest} disponível (instalada {current})");
+            return (new UpdateCheck
             {
-                Ok = true, CurrentVersion = current, LatestVersion = latest, Notes = manifest.Notes,
-                Asset = asset, CheckedAtUtc = now,
+                Ok = true, Channel = canal.Name, ChannelFeed = feed, CurrentVersion = current,
+                LatestVersion = latest, Notes = manifest.Notes, Asset = asset, CheckedAtUtc = now,
                 Message = $"Atualização disponível: {latest}."
-            };
+            }, null);
         }
         catch (Exception ex)
         {
-            AppPaths.Log("update check falhou: " + ex.Message);
-            return new UpdateCheck
-            {
-                Ok = false, CurrentVersion = current, CheckedAtUtc = now,
-                Error = "Não foi possível consultar o canal de atualização: " + ex.Message
-            };
+            AppPaths.Log($"update check «{canal.Name}» falhou: " + ex.Message);
+            return (null, ex.Message);
         }
     }
 
@@ -193,7 +255,10 @@ public static class UpdateService
         {
             if (File.Exists(zipPath)) File.Delete(zipPath);
 
-            var location = ResolveAssetLocation(asset.Url);
+            // UPD-002: a URL relativa do manifesto é resolvida contra o canal que a publicou,
+            // não contra um canal global — com fallback, os dois podem divergir.
+            var location = ResolveAssetLocation(asset.Url, check.ChannelFeed);
+            AppPaths.Log($"update: baixando do canal «{check.Channel ?? "?"}» — {location}");
             if (TryResolveLocal(location, out var assetPath))
             {
                 if (!File.Exists(assetPath))
@@ -465,12 +530,12 @@ public static class UpdateService
     }
 
     /// <summary>URL/pasta relativa no manifesto é resolvida contra o canal (pasta do manifesto).</summary>
-    private static string ResolveAssetLocation(string assetUrl)
+    private static string ResolveAssetLocation(string assetUrl, string? feedUrl)
     {
         var url = (assetUrl ?? "").Trim();
         if (IsAbsoluteLocation(url)) return url;
 
-        var feed = FeedUrl;
+        var feed = string.IsNullOrWhiteSpace(feedUrl) ? FeedUrl : feedUrl!;
         if (TryResolveLocal(feed, out var feedPath))
             return Path.Combine(Path.GetDirectoryName(feedPath) ?? "", url.Replace('/', '\\'));
 
@@ -556,6 +621,10 @@ public sealed class UpdateAsset
 public sealed class UpdateCheck
 {
     public bool Ok { get; init; }
+    /// <summary>Canal que resolveu esta verificação (GitHub, GitLab, ambiente, configurado).</summary>
+    public string? Channel { get; init; }
+    /// <summary>Manifesto do canal usado — base para resolver URL relativa do pacote.</summary>
+    public string? ChannelFeed { get; init; }
     public string CurrentVersion { get; init; } = "";
     public string? LatestVersion { get; init; }
     public string? Notes { get; init; }
@@ -565,3 +634,6 @@ public sealed class UpdateCheck
     public DateTimeOffset CheckedAtUtc { get; init; }
     public bool HasUpdate => Ok && Asset is not null && !string.IsNullOrWhiteSpace(LatestVersion);
 }
+
+/// <summary>Um canal de atualização: nome (para log e tela) + endereço do manifesto.</summary>
+public sealed record UpdateChannel(string Name, string FeedUrl);

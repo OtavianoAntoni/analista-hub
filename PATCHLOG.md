@@ -3,6 +3,82 @@
 > Formato: o resumo conta o que mudou para quem usa; o detalhamento fica separado por
 > **Adicionados**, **Corrigido** e **Removidos**. Cada item diz como foi verificado.
 
+## 2.4.0 — 27/11/2026
+
+**Resumo.** Seis frentes: (1) o **atualizador passou a baixar e instalar dentro do app**, com um botão
+só e um fluxo compartilhado entre o aviso automático e Configurações; (2) a resolução de release
+ganhou **dois canais (GitHub → GitLab)**, com o mesmo mecanismo no **instalador**; (3) **página
+inicial com consulta direta** no card de cada ferramenta, sem os botões "Abrir"/"Testar"; (4)
+**busca rápida sem a moldura branca**, sem botões nos estados de erro e com altura por conteúdo; (5)
+**atalho de uma ferramenta funcionando em todas as invocações** (não só na primeira) e rótulo
+renomeado para **"Atalho de ativação"**; (6) **card do SN sem título redundante**, com o sufixo `1`
+destacado e tamanho de ícone global com preview.
+
+### Adicionados
+
+- **Fluxo único de atualização (UPD-001, UPD-002, UPD-003)** — `Services/UpdateFlow.cs` é a única
+  máquina de estados (`Buscar atualizações → baixando com % → Instalar → instalar e reiniciar`),
+  consumida pela tela de Configurações **e** pelo aviso de versão nova. Falha em qualquer etapa mostra
+  motivo e volta o botão para "Tentar novamente"; reinício é forçado, sem confirmação (decisão de
+  produto: consultas são rápidas).
+- **Dois canais de release** — `UpdateService.Channels()`: ambiente (teste) → URL única legada →
+  **GitHub → GitLab**, com `updater.github-repo` / `updater.gitlab-repo` no `config.local.json`
+  (default embutido, GitLab self-hosted aceito). "Falha" é rede/DNS/timeout, 401/403, 429, 4xx-5xx,
+  manifesto inválido ou pacote sem hash; o log registra canal usado e motivo do fallback. O
+  **instalador** segue a mesma ordem (`CHANNEL` → `CHANNEL_FALLBACK`) e grava a origem no log do setup.
+- **"O que mudou" automático (UPD-003)** — `CHANGELOG_PUBLIC.md` embarcado no pacote; no **primeiro
+  início após atualizar** o popup abre sozinho com o resumo em linguagem de usuário, scroll no topo,
+  e a versão vista é gravada só depois de exibir. Sem o arquivo, cai para o trecho do `PATCHLOG.md`.
+- **Consulta direto no card da página inicial (HOME-001)** — cada card tem o campo do tipo que a
+  ferramenta espera (IP, MAC, termo livre) e "Buscar" à direita; `Enter` faz o mesmo, campo vazio
+  desabilita e formato inválido é barrado antes de consultar (mensagem no próprio card). A execução
+  usa o mesmo caminho da busca rápida, sem duplicar validação.
+- **Tamanho de ícone global (MKT-004)** — `IconScale` (Pequeno/Médio/Grande) aplicado em
+  `ToolIcons.Create`, com bloco **Ícones** em Configurações e preview que muda no mesmo gesto.
+
+### Corrigido
+
+- **Atalho só funcionava uma vez por sessão (UX-002)** — causa real: o `TextChanged` da escrita que o
+  próprio `ShowHud` faz na caixa de busca era entregue **depois** de `ShowFields()` e caía no ramo
+  "voltou a digitar", fechando o painel recém-aberto. O eco passou a ser identificado
+  (`_searchTextFromCode`); a matriz 2ª/3ª/10ª invocação × 3 ferramentas ficou 100 % verde.
+- **Moldura branca na busca rápida e nas janelas das ferramentas (UI-005)** — não era XAML: é a
+  moldura que o Windows 10 desenha na área não cliente (3px a 125 %). `UiKit.TrimFrame` recorta a
+  janela no retângulo do cliente (`SetWindowRgn`), aplicado na busca, no aviso e na Consulta SSE.
+- **Erro na busca rápida com botões (SQ-006)** — estados de erro passaram a ter **apenas texto**;
+  saíram "Tentar de novo", "Verificar conexão", "Copiar detalhe" e "Fechar".
+- **Card do SN (MKT-004)** — título redundante com o nome da ferramenta fora (via
+  `output.hideTitle`), sufixo `1` em cor de destaque (`output.highlightSuffix`) e "Copiar"/"Manter
+  aberto" só quando a consulta devolve SN.
+
+### Removidos
+
+- Botões "Abrir" e "Testar" dos cards da página inicial (substituídos por campo + "Buscar").
+- Botão "Testar agora" da seção "Como executar" — e o `RunFromDashboardAsync`, que só ele usava.
+- Campo somente-leitura da combinação no menu da ferramenta (prefixo técnico `ativo:`); o atalho
+  vigente agora aparece só na linha de status.
+- "Copiar"/"Manter aberto" do aviso de atualização (viraram "Baixar" → "Instalar e reiniciar").
+
+### Verificado (comando e resultado real)
+
+- `dotnet build -c Debug` → 0 erros; `AnalistaHub.exe --check-tools` → `{"ok": true, "ferramentas": 3, "problemas": []}`.
+- `--tool-hotkey-repeat <id> 10` nas 3 ferramentas → 10/10 abrindo prontas para input
+  (`evidence/f1-toolcfg003`).
+- Canais: `--update-channels` mostra GitHub → GitLab; fallback provado com dois canais em pasta;
+  hash divergente aborta o download (`evidence/f2-updater`).
+- Estados do botão de atualização capturados (Idle/Sem versão/Instalar/Tentar novamente) e aviso de
+  versão nova com "Baixar" (`evidence/f2-updater`).
+- Início: IP inválido barrado no card, consulta real registrada no histórico e Consulta SSE aberta
+  pelo card (`evidence/f3-inicio`).
+- Busca rápida: nenhum pixel branco na moldura após o recorte; erro só com texto; alturas 268 → 424
+  → 406 dip (`evidence/f4-busca`).
+- Card do SN com e sem serial, e três tamanhos de ícone (`evidence/f5-mkt`).
+
+### Pendente registrado
+
+- `CFG-005` (toggle "Comentários extras") fica para o próximo patch log: o que são os comentários,
+  quais tipos, onde aparecem e default on/off ainda não foram definidos.
+
 ## 2.3.0 — 25/11/2026
 
 **Resumo.** Três entregas que tiram trabalho manual de quem instala e de quem usa o HUB em máquina de

@@ -47,12 +47,21 @@ public sealed partial class CommandHud : Window
     private bool _closing;
     private DateTime _shownAt = DateTime.MinValue;
 
+    /// <summary>
+    /// Último texto que o PRÓPRIO código escreveu em SearchBox. Existe porque o TextChanged pode ser
+    /// entregue depois da escrita (UX-002): sem essa marca, o eco da abertura era lido como digitação
+    /// do usuário e fechava o painel de campos que ShowFields() tinha acabado de abrir.
+    /// </summary>
+    private string? _searchTextFromCode;
+
     public CommandHud()
     {
         InitializeComponent();
         Title = "Analista Hub";
         UiKit.MakeHudWindow(this);
         UiKit.TryMica(this);
+        // UI-005: recorta a moldura clara em volta da janela (ver UiKit.TrimFrame)
+        UiKit.TrimFrame(this);
         UiKit.ApplyTheme(RootGrid);
 
         ResultsList.ItemsSource = _rows;
@@ -85,7 +94,7 @@ public sealed partial class CommandHud : Window
                 var tool = App.Catalog.Find(toolId);
                 if (tool is not null)
                 {
-                    SearchBox.Text = tool.Name;
+                    SetSearchText(tool.Name);
                     var row = _rows.FirstOrDefault(r => ReferenceEquals(r.Tool, tool));
                     if (row is not null) ResultsList.SelectedItem = row;
 
@@ -170,7 +179,7 @@ public sealed partial class CommandHud : Window
         ErrorText.Text = "";
         BusyRing.IsActive = false;
         StatusText.Text = "";
-        SearchBox.Text = "";
+        SetSearchText("");
         RefreshResults("");
     }
 
@@ -178,6 +187,19 @@ public sealed partial class CommandHud : Window
     private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
     {
         if (_busy) return;
+
+        // UX-002: o TextChanged da escrita feita por ShowHud pode chegar atrasado — depois de
+        // ShowFields(). Na 2ª invocação do atalho ele caía no ramo "voltou a digitar" e fechava os
+        // campos recém-abertos, deixando a ferramenta só destacada na lista (era preciso Enter).
+        // Texto igual ao que o código escreveu é eco, não digitação: mantém a lista coerente e sai.
+        if (_active is not null &&
+            string.Equals(SearchBox.Text, _searchTextFromCode, StringComparison.Ordinal))
+        {
+            AppPaths.Log("hud: eco da escrita do próprio HUD ignorado (campos preservados)");
+            RefreshResults(SearchBox.Text);
+            return;
+        }
+
         if (_active is not null)
         {
             // voltou a digitar: sai do modo campos
@@ -190,6 +212,13 @@ public sealed partial class CommandHud : Window
             ErrorBanner.Visibility = Visibility.Collapsed;
         }
         RefreshResults(SearchBox.Text);
+    }
+
+    /// <summary>Escreve na busca marcando a escrita como do código (o eco não é digitação).</summary>
+    private void SetSearchText(string text)
+    {
+        _searchTextFromCode = text;
+        SearchBox.Text = text;
     }
 
     private void RefreshResults(string query)
@@ -259,6 +288,7 @@ public sealed partial class CommandHud : Window
             var scale = UiKit.Scale(this);
             AppWindow.Resize(new Windows.Graphics.SizeInt32(
                 (int)Math.Round(WidthDip * scale), (int)Math.Round(height * scale)));
+            UiKit.TrimFrame(this);   // UI-005: a região acompanha o novo tamanho
             AppPaths.Log($"hud: altura {height:0} dip (itens={_rows.Count}, campos={_boxes.Count}, faixa={ErrorBanner.Visibility})");
         }
         catch (Exception ex) { AppPaths.Log("ApplySize: " + ex.Message); }
@@ -748,7 +778,7 @@ public sealed partial class CommandHud : Window
         if (validationError is not null)
         {
             // MKT-003: erro de digitação não tem detalhe para copiar nem consulta para repetir.
-            ShowError(validationError, tool, canRetry: false, canCopyDetail: false, showClose: true);
+            ShowError(validationError);
             return;
         }
 
@@ -823,7 +853,7 @@ public sealed partial class CommandHud : Window
         if (!string.IsNullOrWhiteSpace(detail) &&
             detail.Contains("localmente administrado", StringComparison.OrdinalIgnoreCase))
         {
-            ShowError(detail, tool, canRetry: false, canCopyDetail: false, showClose: true);
+            ShowError(detail);
             return;
         }
 
@@ -832,33 +862,26 @@ public sealed partial class CommandHud : Window
             var reachable = await Probes.CheckTcpAsync(tool.Network.Host, tool.Network.Port, 2500);
             if (!reachable)
             {
-                ShowError("Sem conexão com o servidor. Verifique a VPN e tente novamente.", tool, canRetry: true, showProbe: true);
+                ShowError("Sem conexão com o servidor. Verifique a VPN e tente novamente.");
                 return;
             }
         }
 
-        ShowError(string.IsNullOrWhiteSpace(detail) ? "A ferramenta não devolveu resultado." : detail,
-            tool, canRetry: true);
+        ShowError(string.IsNullOrWhiteSpace(detail) ? "A ferramenta não devolveu resultado." : detail);
     }
 
-    private void ShowError(string message, ToolManifest? tool, bool canRetry, bool showProbe = false,
-        bool canCopyDetail = true, bool showClose = false)
+    /// <summary>
+    /// SQ-006: erro na busca rápida é TEXTO — nenhum botão. Repetir a consulta, testar a conexão e
+    /// copiar detalhe saíram daqui; quem quiser repetir dá Enter de novo, e o aviso fecha com Esc,
+    /// clique fora ou a próxima consulta. (MKT-003/MAC-001 já tinham tirado botões dos erros de dado.)
+    /// </summary>
+    private void ShowError(string message)
     {
         ErrorText.Text = message;
         ErrorBanner.Visibility = Visibility.Visible;
-        RetryButton.Visibility = canRetry ? Visibility.Visible : Visibility.Collapsed;
-        // "Verificar conexão" só quando a falha é de rede. Numa validação (IP/MAC inválido) o botão
-        // convidava a testar a VPN por causa de um erro de digitação.
-        ProbeButton.Visibility = showProbe ? Visibility.Visible : Visibility.Collapsed;
-        // MKT-003/MAC-001: erro de dado (IP inválido, MAC localmente administrado) não tem o que
-        // copiar nem repetir; sobra a ação de fechar. Falha de execução mantém os dois.
-        CopyDetailButton.Visibility = canCopyDetail ? Visibility.Visible : Visibility.Collapsed;
-        CloseButton.Visibility = showClose ? Visibility.Visible : Visibility.Collapsed;
         StatusText.Text = "";
         ApplySize();
     }
-
-    private void OnCloseErrorClick(object sender, RoutedEventArgs e) => HideHud();
 
     private void SetBusy(bool busy)
     {
@@ -870,30 +893,8 @@ public sealed partial class CommandHud : Window
     }
 
     // ------------------------------------------------------------------ botões
-    private async void OnRetryClick(object sender, RoutedEventArgs e)
-    {
-        if (_active is not null) await ExecuteAsync(_active);
-        else await AdvanceAsync();
-    }
-
-    private async void OnProbeClick(object sender, RoutedEventArgs e)
-    {
-        var tool = _active ?? (ResultsList.SelectedItem as ToolRow)?.Tool;
-        if (tool?.Network is null) return;
-        ProbeButton.IsEnabled = false;
-        StatusText.Text = $"Testando {tool.Network.Label} ({tool.Network.Host}:{tool.Network.Port})…";
-        var ok = await Probes.CheckTcpAsync(tool.Network.Host, tool.Network.Port, 3000);
-        ProbeButton.IsEnabled = true;
-        StatusText.Text = ok
-            ? $"Servidor respondeu ({tool.Network.Host}:{tool.Network.Port}). Se a consulta falhou, o problema é credencial ou resposta do serviço."
-            : $"Sem resposta de {tool.Network.Host}:{tool.Network.Port}. Verifique a VPN.";
-    }
-
-    private void OnCopyDetailClick(object sender, RoutedEventArgs e)
-    {
-        ClipboardService.SetText(ErrorText.Text);
-        StatusText.Text = "Detalhe copiado.";
-    }
+    // SQ-006: os botões do estado de erro (repetir, verificar conexão, copiar detalhe, fechar)
+    // foram removidos junto com a faixa que os hospedava. A HUD não tem mais ação nesse estado.
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
 

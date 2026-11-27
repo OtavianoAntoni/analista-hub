@@ -9,10 +9,23 @@ public static class PatchNotes
 {
     private static string Arquivo => Path.Combine(AppContext.BaseDirectory, "PATCHLOG.md");
 
+    /// <summary>
+    /// Changelog para o usuário final (UPD-003): linguagem de quem usa, sem ID interno nem nome de
+    /// arquivo. Vai no pacote ao lado do PATCHLOG técnico.
+    /// </summary>
+    private static string ArquivoPublico => Path.Combine(AppContext.BaseDirectory, "CHANGELOG_PUBLIC.md");
+
     /// <summary>Seção da versão pedida ("2.1" casa com cabeçalho "## 2.1 — data" e com "2.1.0").</summary>
-    public static string? SectionFor(string version)
+    public static string? SectionFor(string version) => Secao(version, Todas());
+
+    /// <summary>
+    /// Seção do changelog público. Null quando o pacote não trouxe o arquivo — quem chama decide o
+    /// fallback (mostrar o texto técnico ou não abrir o aviso).
+    /// </summary>
+    public static string? PublicSectionFor(string version) => Secao(version, Publicas());
+
+    private static string? Secao(string version, List<(string Version, string Body)> secoes)
     {
-        var secoes = Todas();
         if (secoes.Count == 0) return null;
 
         if (!string.IsNullOrWhiteSpace(version))
@@ -28,12 +41,17 @@ public static class PatchNotes
     }
 
     /// <summary>Todas as seções, da mais nova para a mais antiga.</summary>
-    public static List<(string Version, string Body)> Todas()
+    public static List<(string Version, string Body)> Todas() => Ler(Arquivo);
+
+    /// <summary>Seções do changelog público (linguagem de usuário final).</summary>
+    public static List<(string Version, string Body)> Publicas() => Ler(ArquivoPublico);
+
+    private static List<(string Version, string Body)> Ler(string arquivo)
     {
         var lista = new List<(string, string)>();
         try
         {
-            if (!File.Exists(Arquivo)) return lista;
+            if (!File.Exists(arquivo)) return lista;
 
             string? versao = null;
             var corpo = new List<string>();
@@ -45,7 +63,7 @@ public static class PatchNotes
                 corpo.Clear();
             }
 
-            foreach (var linha in File.ReadAllLines(Arquivo))
+            foreach (var linha in File.ReadAllLines(arquivo))
             {
                 if (linha.StartsWith("## ", StringComparison.Ordinal))
                 {

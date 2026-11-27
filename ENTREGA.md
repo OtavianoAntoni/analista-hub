@@ -107,8 +107,8 @@ digitar `:macv` → `Enter` → campo aparece → `Enter` de novo com o MAC no c
 
 ## 5. Pontos de atenção conhecidos
 
-- **Atalho global:** se outra ferramenta já usar `Ctrl+Alt+Espaço`, o app avisa na barra lateral e
-  em Configurações → Atalho global dá para trocar. (PowerToys Run usa `Alt+Espaço`; a Paleta de
+- **Atalho de ativação:** se outra ferramenta já usar `Ctrl+Alt+Espaço`, o app avisa na barra lateral e
+  em Configurações → Atalho de ativação dá para trocar. (PowerToys Run usa `Alt+Espaço`; a Paleta de
   Comandos do PowerToys usa `Win+Alt+Espaço` — nenhum conflito com o padrão escolhido.)
 - **Duplo aviso de erro:** os scripts atuais abrem o próprio popup quando falham. Enquanto não
   migrarem para o contrato `-Mode hub` (descrito na SPEC §7), a falha aparece no HUD **e** no popup

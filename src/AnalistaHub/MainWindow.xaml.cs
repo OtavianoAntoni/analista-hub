@@ -28,6 +28,14 @@ public sealed partial class MainWindow : Window
     private Action<bool>? _armHotkeyCapture;
     private Action? _validateCurrentTool;
     private Action? _runUpdateCheck;
+    /// <summary>Assinatura viva do UpdateFlow na tela de Configurações (a página é reconstruída).</summary>
+    private Action<UpdateState>? _updateFlowHandler;
+    /// <summary>
+    /// HOME-001: campo e ação "Buscar" de cada card da página Início. Existe para o diagnóstico
+    /// `--home-buscar` acionar o MESMO caminho do usuário, sem clique sintético.
+    /// </summary>
+    private readonly Dictionary<string, (TextBox Entrada, Button Buscar, Action Disparar)> _homeCampos =
+        new(StringComparer.OrdinalIgnoreCase);
     private bool _nudging;
 
     // UI-004 (2.3): tamanho ÚNICO em DIP (1120×760), que o Windows converte para pixels conforme a
@@ -295,7 +303,7 @@ public sealed partial class MainWindow : Window
 
     public void UpdateHotkeyHint()
     {
-        HotkeyHint.Text = $"Atalho global: {App.Settings.Hotkey}";
+        HotkeyHint.Text = $"Atalho de ativação: {App.Settings.Hotkey}";
     }
 
     public void RebuildNav()
@@ -303,7 +311,7 @@ public sealed partial class MainWindow : Window
         var selected = (NavList.SelectedItem as NavItem)?.Title;
         var items = new List<NavItem>
         {
-            new() { Title = "Início", Glyph = "\uE80F", IconVisual = ToolIcons.Glyph("\uE80F", 15), Kind = "home" }
+            new() { Title = "Início", Glyph = "\uE80F", IconVisual = ToolIcons.Material("home", 15), Kind = "home" }
         };
         items.AddRange(App.Catalog.Tools.Select(t => new NavItem
         {
@@ -313,7 +321,7 @@ public sealed partial class MainWindow : Window
             ToolId = t.Id,
             Kind = "tool"
         }));
-        items.Add(new NavItem { Title = "Configurações", Glyph = "\uE713", IconVisual = ToolIcons.Glyph("\uE713", 15), Kind = "settings" });
+        items.Add(new NavItem { Title = "Configurações", Glyph = "\uE713", IconVisual = ToolIcons.Material("settings", 15), Kind = "settings" });
 
         NavList.ItemsSource = items;
         NavList.SelectedItem = items.FirstOrDefault(i => i.Title == selected) ?? items[0];
@@ -387,6 +395,73 @@ public sealed partial class MainWindow : Window
             try { _runUpdateCheck?.Invoke(); }
             catch (Exception ex) { AppPaths.Log("CheckUpdatesNow: " + ex.Message); }
         });
+    }
+
+    /// <summary>
+    /// UPD-003: "O que mudou nesta versão" abre sozinho no 1º início após a atualização, com o texto
+    /// RESUMIDO (CHANGELOG_PUBLIC.md) e o scroll no topo. Se o pacote não trouxe o resumo, cai para o
+    /// PATCHLOG técnico — é o fallback registrado no patch request.
+    /// </summary>
+    public async void ShowPublicWhatsNew()
+    {
+        var versao = UpdateService.CurrentVersion;
+        var resumido = PatchNotes.PublicSectionFor(versao);
+        var texto = resumido ?? PatchNotes.SectionFor(versao);
+        if (string.IsNullOrWhiteSpace(texto))
+        {
+            AppPaths.Log("whatsNew automático: sem changelog no pacote — aviso não abriu");
+            return;
+        }
+
+        // O changelog é markdown simples (`**Tema**` e `- item`). O ContentDialog mostra texto puro,
+        // então o mínimo é traduzido aqui — asterisco literal na tela pareceria defeito.
+        var corpoTexto = new StackPanel { Spacing = 6 };
+        foreach (var linha in texto.Replace("\r", "").Split('\n'))
+        {
+            var t = linha.Trim();
+            if (t.Length == 0) { corpoTexto.Children.Add(new TextBlock { Height = 4 }); continue; }
+
+            var negrito = t.StartsWith("**") && t.EndsWith("**") && t.Length > 4;
+            if (negrito) t = t[2..^2];
+            else if (t.StartsWith("- ")) t = "• " + t[2..];
+
+            corpoTexto.Children.Add(new TextBlock
+            {
+                Text = t,
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 12.5,
+                FontWeight = negrito ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal,
+                Margin = negrito ? new Thickness(0, 6, 0, 0) : new Thickness(0)
+            });
+        }
+
+        var corpo = new ScrollViewer
+        {
+            Content = corpoTexto,
+            MaxHeight = 420,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
+        // scroll no TOPO assim que o conteúdo mede (o padrão pode herdar a posição do último aviso)
+        corpo.Loaded += (_, _) => corpo.ChangeView(null, 0, null, true);
+
+        var dialog = new ContentDialog
+        {
+            Title = "O que mudou nesta versão",
+            Content = corpo,
+            CloseButtonText = "Fechar",
+            XamlRoot = (Content as FrameworkElement)?.XamlRoot
+        };
+
+        try
+        {
+            await dialog.ShowAsync();
+            // marca só depois de realmente exibido: falha aqui volta a tentar no próximo início
+            App.Settings.PublicChangelogSeenVersion = UpdateService.Normalize(versao);
+            SettingsService.Save();
+            AppPaths.Log($"whatsNew automático: v{versao} exibida ({texto.Length} caracteres, " +
+                         $"{(resumido is null ? "PATCHLOG técnico" : "changelog público")})");
+        }
+        catch (Exception ex) { AppPaths.Log("whatsNew automático: " + ex.Message); }
     }
 
     /// <summary>
@@ -562,13 +637,10 @@ public sealed partial class MainWindow : Window
     private void ShowHome()
     {
         ContentPanel.Children.Clear();
+        _homeCampos.Clear();
         AddPageHeader("Início", "Cada ferramenta agrupa um script e sabe se apresentar: para que serve, como executar, o que exige e como entrega o resultado.");
 
-        var hotkeyRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        hotkeyRow.Children.Add(new Button { Content = $"Abrir busca ({App.Settings.Hotkey})", Style = (Style)Application.Current.Resources["AccentButtonStyle"] });
-        ((Button)hotkeyRow.Children[0]).Click += (_, _) => HudController.Show();
-        hotkeyRow.Children.Add(Muted("Funciona com qualquer janela em foco, inclusive em tela cheia."));
-        AddBlock("Comando rápido", hotkeyRow);
+        
 
         var tools = App.Catalog.Tools;
         if (tools.Count == 0)
@@ -580,6 +652,8 @@ public sealed partial class MainWindow : Window
 
         foreach (var tool in tools)
         {
+            var card = new StackPanel { Spacing = 10 };
+
             var row = new Grid();
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -592,23 +666,103 @@ public sealed partial class MainWindow : Window
             left.Children.Add(Muted(tool.IsBroken ? "Manifesto com problema: " + tool.LoadError : tool.Description));
             row.Children.Add(left);
 
-            var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
             var status = new TextBlock { Text = "○", FontSize = 14, VerticalAlignment = VerticalAlignment.Center };
-            actions.Children.Add(status);
+            Grid.SetColumn(status, 1);
+            row.Children.Add(status);
+            card.Children.Add(row);
+
             if (!tool.IsBroken)
             {
-                var open = new Button { Content = "Abrir", FontSize = 12 };
-                open.Click += (_, _) => HudController.ShowTool(tool.Id);
-                actions.Children.Add(open);
+                // HOME-001: o card traz o input que a ferramenta espera + "Buscar" à direita.
+                // Ferramenta de base local (Consulta SSE) pede termo livre.
+                var campo = tool.IsDataset ? null : tool.Inputs.FirstOrDefault();
 
-                var run = new Button { Content = "Testar", FontSize = 12 };
-                run.Click += async (_, _) => await RunFromDashboardAsync(tool);
-                actions.Children.Add(run);
+                // Largura fixa no campo: o card vive num StackPanel vertical (largura infinita na
+                // medição), então coluna "*" não distribui espaço — a linha inteira estouraria a
+                // janela e o botão sairia de vista.
+                var linhaBusca = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+
+                var entrada = new TextBox
+                {
+                    PlaceholderText = campo is not null && !string.IsNullOrWhiteSpace(campo.Placeholder)
+                        ? campo.Placeholder
+                        : tool.IsDataset ? "SIGLA, cidade ou termo" : "valor para consultar",
+                    FontSize = 13.5,
+                    Width = 460
+                };
+
+                var buscar = new Button
+                {
+                    Content = "Buscar",
+                    IsEnabled = false,
+                    VerticalAlignment = VerticalAlignment.Bottom
+                };
+                if (Application.Current.Resources.TryGetValue("AccentButtonStyle", out var accentStyle) &&
+                    accentStyle is Style estilo)
+                    buscar.Style = estilo;
+
+                var aviso = new TextBlock
+                {
+                    FontSize = 11.5,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = new SolidColorBrush(UiKit.Bad),
+                    Visibility = Visibility.Collapsed
+                };
+
+                void Disparar()
+                {
+                    var valor = entrada.Text.Trim();
+                    if (valor.Length == 0) return;
+
+                    // validação básica por ferramenta: IP/MAC inválido não dispara consulta
+                    if (campo is not null)
+                    {
+                        var problema = FieldValidation.Check(campo, valor);
+                        if (problema is not null)
+                        {
+                            aviso.Text = problema;
+                            aviso.Visibility = Visibility.Visible;
+                            return;
+                        }
+                    }
+
+                    aviso.Visibility = Visibility.Collapsed;
+
+                    if (tool.IsDataset)
+                    {
+                        SsePanelController.Open(valor);
+                        return;
+                    }
+
+                    // HOME-001: mesma execução da busca rápida — abre os campos já preenchidos e
+                    // consulta. Não duplica validação nem apresentação de resultado.
+                    HudController.ShowTool(tool.Id);
+                    HudController.FillFirstField(valor);
+                    HudController.Submit();
+                }
+
+                entrada.TextChanged += (_, _) =>
+                {
+                    buscar.IsEnabled = entrada.Text.Trim().Length > 0;
+                    if (aviso.Visibility == Visibility.Visible) aviso.Visibility = Visibility.Collapsed;
+                };
+                entrada.KeyDown += (_, e) =>
+                {
+                    if (e.Key != VirtualKey.Enter) return;
+                    e.Handled = true;
+                    if (buscar.IsEnabled) Disparar();
+                };
+                buscar.Click += (_, _) => Disparar();
+
+                linhaBusca.Children.Add(entrada);
+                linhaBusca.Children.Add(buscar);
+
+                card.Children.Add(linhaBusca);
+                card.Children.Add(aviso);
+                _homeCampos[tool.Id] = (entrada, buscar, Disparar);
             }
-            Grid.SetColumn(actions, 1);
-            row.Children.Add(actions);
 
-            ContentPanel.Children.Add(Card(row));
+            ContentPanel.Children.Add(Card(card));
 
             if (!tool.IsBroken && (tool.Network is not null || tool.Credentials is not null))
                 _ = UpdateStatusAsync(tool, status);
@@ -672,57 +826,33 @@ public sealed partial class MainWindow : Window
         ToolTipService.SetToolTip(target, tooltip);
     }
 
-    private async Task RunFromDashboardAsync(ToolManifest tool)
+    /// <summary>
+    /// Diagnóstico (`--home-buscar id valor`): escreve no campo do card da página Início e aciona o
+    /// "Buscar" pelo mesmo caminho do usuário (TextChanged → validação → consulta).
+    /// </summary>
+    public void HomeBuscar(string toolId, string valor)
     {
-        if (tool.IsDataset)
+        if (!_homeCampos.TryGetValue(toolId, out var par))
         {
-            SsePanelController.Open();
+            AppPaths.Log($"home-buscar: card «{toolId}» não encontrado");
             return;
         }
 
-        var inputs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var clip = ClipboardService.GetText();
-        foreach (var field in tool.Inputs)
-        {
-            if (field.EmptyUsesClipboard) continue; // script lê o clipboard
-            if (!string.IsNullOrWhiteSpace(clip)) inputs[field.Key] = clip;
-        }
+        par.Entrada.Text = valor ?? "";
 
-        var result = await ToolRunner.RunAsync(tool, inputs, CancellationToken.None);
-        if (result.Ok)
+        // O TextChanged do WinUI pode ser entregue depois desta chamada (mesma família do UX-002);
+        // esperar um tick é o que garante ler o estado real do botão antes de decidir.
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
-            // MKT-001: "sem SN" não copia nada. No painel o campo de IP pode ter vindo do clipboard,
-            // então a legenda usa o valor copiado quando não há entrada digitada.
-            if (result.IsZeroComNota(tool))
-            {
-                var paraNota = inputs;
-                if (paraNota.Count == 0 && !string.IsNullOrWhiteSpace(clip) && tool.Inputs.Count > 0)
-                    paraNota = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        [tool.Inputs[0].Key] = clip
-                    };
-
-                ToastController.ShowSuccess(tool, tool.Output.ZeroValue!.Title,
-                    result.ZeroSubtitle(tool, paraNota), "notify");
-            }
-            else
-            {
-                ClipboardService.SetText(result.Value);
-                ToastController.ShowSuccess(tool, result.Value, tool.Output.ValueLabel, "clipboard");
-            }
-        }
-        else
-        {
-            var detail = result.Detail;
-            if (tool.Network is not null && !result.TimedOut &&
-                !await Probes.CheckTcpAsync(tool.Network.Host, tool.Network.Port, 2500))
-                detail = "Sem conexão com o servidor. Verifique a VPN e tente novamente.";
-            ToastController.ShowFailure(tool, App.TituloFalha, detail);
-        }
-
-        HistoryStore.Append(new HistoryEntry(DateTime.Now, tool.Id, tool.Name, "teste pelo painel",
-            result.Ok, result.Elapsed.TotalSeconds, result.Ok ? result.Value : result.Detail, "painel"));
+            AppPaths.Log($"home-buscar: «{toolId}» = \"{valor}\" · botão={(par.Buscar.IsEnabled ? "habilitado" : "desabilitado")}");
+            if (!par.Buscar.IsEnabled) return;   // vazio: nada dispara (aceite HOME-001)
+            par.Disparar();
+        });
     }
+
+    // HOME-001 substituiu os botões "Abrir"/"Testar" do card por input + "Buscar", que executa pelo
+    // MESMO caminho da busca rápida (HUD). O antigo RunFromDashboardAsync saiu junto: era o único
+    // chamador do trecho e duplicava validação e apresentação de resultado.
 
     // ================================================================== ferramenta
     private void ShowTool(ToolManifest tool)
@@ -791,9 +921,8 @@ public sealed partial class MainWindow : Window
             var openHud = new Button { Content = "Abrir no comando", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
             openHud.Click += (_, _) => HudController.ShowTool(tool.Id);
             actions.Children.Add(openHud);
-            var testNow = new Button { Content = "Testar agora (usa o clipboard)" };
-            testNow.Click += async (_, _) => await RunFromDashboardAsync(tool);
-            actions.Children.Add(testNow);
+            // TOOL-CFG-002: "Testar agora" saiu — a consulta rápida é o campo da página Início
+            // e a busca rápida; nenhuma outra ação desta seção dependia dele.
         }
         how.Children.Add(actions);
         AddBlock("Como executar", how);
@@ -1220,7 +1349,6 @@ public sealed partial class MainWindow : Window
         var visibilityPanel = new StackPanel { Spacing = 8 };
         var hideToggle = new ToggleSwitch
         {
-            Header = "Ocultar ferramenta",
             IsOn = App.Settings.HiddenTools.Contains(tool.Id),
             OnContent = "oculta da busca",
             OffContent = "aparece na busca"
@@ -1244,14 +1372,9 @@ public sealed partial class MainWindow : Window
 
         // SQ-003: atalho global só desta ferramenta (não abre a busca)
         var atalhoPanel = new StackPanel { Spacing = 8 };
-        var atalhoBox = new TextBox
-        {
-            IsReadOnly = true,
-            Width = 300,
-            Text = App.Settings.ToolHotkeys.TryGetValue(tool.Id, out var atalhoGravado) ? atalhoGravado : "",
-            PlaceholderText = "sem atalho",
-            FontFamily = new FontFamily("Consolas")
-        };
+        // TOOL-CFG-003: o campo somente-leitura (combinação em Consolas) saiu da UI — era o "campo
+        // técnico" com prefixo "ativo:". A combinação vigente aparece só na linha de status.
+        var atalhoAtual = App.Settings.ToolHotkeys.TryGetValue(tool.Id, out var atalhoGravado) ? atalhoGravado : "";
         var atalhoBtn = new Button { Content = "Definir atalho" };
         var atalhoLimpar = new Button { Content = "Remover" };
         var atalhoStatus = Muted("");
@@ -1261,10 +1384,10 @@ public sealed partial class MainWindow : Window
         {
             if (App.HotkeyProblems.TryGetValue(tool.Id, out var problema))
                 PintarStatus(atalhoStatus, problema, erro: true);
-            else if (string.IsNullOrWhiteSpace(atalhoBox.Text))
-                PintarStatus(atalhoStatus, "sem atalho global — a ferramenta só abre pela busca ou pelo menu", erro: false);
+            else if (string.IsNullOrWhiteSpace(atalhoAtual))
+                PintarStatus(atalhoStatus, "sem atalho de ativação — a ferramenta só abre pela busca ou pelo menu", erro: false);
             else
-                PintarStatus(atalhoStatus, $"ativo: {atalhoBox.Text}", erro: false);
+                PintarStatus(atalhoStatus, $"registrado: {atalhoAtual}", erro: false);
         }
 
         void Capturar(object? s, KeyRoutedEventArgs e)
@@ -1301,8 +1424,8 @@ public sealed partial class MainWindow : Window
 
             if (App.ApplyToolHotkey(tool.Id, combo, out var erro))
             {
-                atalhoBox.Text = combo;
-                PintarStatus(atalhoStatus, $"registrado: {combo}", erro: false);
+                atalhoAtual = combo;
+                MostrarEstado();
             }
             else PintarStatus(atalhoStatus, erro, erro: true);
         }
@@ -1312,14 +1435,14 @@ public sealed partial class MainWindow : Window
             armado = true;
             atalhoBtn.Content = "pressione a combinação… (Esc cancela)";
             PintarStatus(atalhoStatus, "captura armada — pressione a combinação agora", erro: false);
-            atalhoBox.Focus(FocusState.Programmatic);
+            atalhoBtn.Focus(FocusState.Programmatic);
         };
 
         atalhoLimpar.Click += (_, _) =>
         {
             if (App.ApplyToolHotkey(tool.Id, "", out var erro))
             {
-                atalhoBox.Text = "";
+                atalhoAtual = "";
                 MostrarEstado();
             }
             else PintarStatus(atalhoStatus, erro, erro: true);
@@ -1331,13 +1454,13 @@ public sealed partial class MainWindow : Window
         {
             Orientation = Orientation.Horizontal,
             Spacing = 8,
-            Children = { atalhoBox, atalhoBtn, atalhoLimpar }
+            Children = { atalhoBtn, atalhoLimpar }
         });
         atalhoPanel.Children.Add(atalhoStatus);
         atalhoPanel.Children.Add(Muted(
-            "Atalho global desta ferramenta: dispara sem abrir a busca. O que acontece ao acionar está em " +
+            "Atalho de ativação desta ferramenta: dispara sem abrir a busca. O que acontece ao acionar está em " +
             "«Comportamento do atalho», logo abaixo."));
-        AddBlock("Atalho global", atalhoPanel);
+        AddBlock("Atalho de ativação", atalhoPanel);
         MostrarEstado();
 
         // CFG-003: o que o atalho faz quando é acionado — por ferramenta, com padrão explícito
@@ -1602,7 +1725,7 @@ public sealed partial class MainWindow : Window
         hotkeyPanel.Children.Add(armRow);
         hotkeyPanel.Children.Add(hotkeyStatus);
         hotkeyPanel.Children.Add(Muted("Clique em \"Definir atalho\" e pressione a combinação — ela é gravada na hora. Evite Alt+Espaço (PowerToys Run) e Win+Alt+Espaço (Paleta de Comandos)."));
-        AddBlock("Atalho global", hotkeyPanel);
+        AddBlock("Atalho de ativação", hotkeyPanel);
 
         // aviso
         var toastPanel = new StackPanel { Spacing = 8 };
@@ -1841,10 +1964,64 @@ public sealed partial class MainWindow : Window
             "reabra a ferramenta para reiniciar a contagem."));
         AddBlock("Ping do destino", pingPanel);
 
-        // atualizações
+        // MKT-004: tamanho global dos ícones das ferramentas, com preview ao vivo
+        var iconPanel = new StackPanel { Spacing = 8 };
+        var iconCombo = new ComboBox { Width = 220 };
+        iconCombo.Items.Add("Pequeno");
+        iconCombo.Items.Add("Médio (padrão)");
+        iconCombo.Items.Add("Grande");
+        iconCombo.SelectedIndex = App.Settings.IconScale switch
+        {
+            < 0.9 => 0,
+            > 1.1 => 2,
+            _ => 1
+        };
+
+        var iconPreview = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        void RenderIconPreview()
+        {
+            iconPreview.Children.Clear();
+            var amostra = App.Catalog.Tools.FirstOrDefault(t => !t.IsBroken);
+            if (amostra is null) return;
+
+            iconPreview.Children.Add(ToolIcons.Create(amostra, 18, 14));
+            iconPreview.Children.Add(new TextBlock
+            {
+                Text = $"{amostra.Name} — assim fica o ícone nas listas",
+                VerticalAlignment = VerticalAlignment.Center,
+                FontSize = 12.5
+            });
+        }
+        RenderIconPreview();
+
+        iconCombo.SelectionChanged += (_, _) =>
+        {
+            App.Settings.IconScale = iconCombo.SelectedIndex switch { 0 => 0.8, 2 => 1.3, _ => 1.0 };
+            SettingsService.Save();
+            RenderIconPreview();       // preview muda no mesmo gesto
+            RebuildNav();              // menu lateral reflete na hora
+            HudController.Rebuild();   // a busca rápida é recriada na próxima abertura
+            AppPaths.Log($"ícones: escala {App.Settings.IconScale:0.0}");
+        };
+
+        var iconRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14 };
+        iconRow.Children.Add(iconCombo);
+        iconRow.Children.Add(iconPreview);
+        iconPanel.Children.Add(iconRow);
+        iconPanel.Children.Add(Muted("Vale para todas as ferramentas: menu lateral, página inicial, busca rápida e aviso de resultado."));
+        AddBlock("Ícones", iconPanel);
+
+        // atualizações — UPD-001 (revisado): UM fluxo, um botão. A notificação automática usa o mesmo
+        // UpdateFlow, então Configurações e aviso nunca mostram estados diferentes (decisão (A)).
         var updatePanel = new StackPanel { Spacing = 8 };
         var updateVersion = Muted($"Versão instalada: v{UpdateService.CurrentVersion}");
-        var updateStatus = Muted("Ainda não verificado nesta sessão.");
+        var updateStatus = Muted("");
 
         // "o que mudou": as notas vêm do canal de atualização e o texto completo vai no pacote
         var updateNotesText = new TextBlock
@@ -1865,22 +2042,27 @@ public sealed partial class MainWindow : Window
         };
         var updateBar = new ProgressBar
         {
-            Minimum = 0, Maximum = 100, Value = 0, Width = 360,
+            Minimum = 0, Maximum = 100, Value = 0, Width = 320,
             HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed
+        };
+        var updateRing = new ProgressRing
+        {
+            IsActive = false,
+            Width = 18,
+            Height = 18,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed
         };
 
         var updateRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
         var checkNow = new Button
         {
-            Content = "Procurar por atualização agora",
+            Content = "Buscar atualizações",
             Style = (Style)Application.Current.Resources["AccentButtonStyle"]
         };
-        var installNow = new Button { Content = "Baixar e instalar", Visibility = Visibility.Collapsed };
-        var restartNow = new Button { Content = "Reiniciar e atualizar", Visibility = Visibility.Collapsed };
         var whatsNew = new Button { Content = "O que mudou nesta versão" };
         updateRow.Children.Add(checkNow);
-        updateRow.Children.Add(installNow);
-        updateRow.Children.Add(restartNow);
+        updateRow.Children.Add(updateRing);
         updateRow.Children.Add(whatsNew);
 
         whatsNew.Click += async (_, _) =>
@@ -1903,41 +2085,39 @@ public sealed partial class MainWindow : Window
             try { await dialog.ShowAsync(); } catch (Exception ex) { AppPaths.Log("whatsNew: " + ex.Message); }
         };
 
-        void RefreshUpdateState()
+        void RenderUpdate(UpdateState state)
         {
-            var last = UpdateService.LastCheck;
-            var pendingDir = UpdateService.PendingPayloadDir();
+            updateStatus.Text = string.IsNullOrWhiteSpace(state.Channel)
+                ? state.Message
+                : $"{state.Message} (canal {state.Channel})";
 
-            if (pendingDir is not null)
+            updateRing.IsActive = state.Busy;
+            updateRing.Visibility = state.Busy ? Visibility.Visible : Visibility.Collapsed;
+
+            var baixando = state.Stage == UpdateStage.Downloading;
+            updateBar.Visibility = baixando ? Visibility.Visible : Visibility.Collapsed;
+            updateBar.IsIndeterminate = false;
+            if (baixando) updateBar.Value = Math.Round(state.Fraction * 100);
+
+            checkNow.IsEnabled = !state.Busy;
+            checkNow.Content = state.Stage switch
             {
-                updateStatus.Text = $"Pacote v{App.Settings.PendingUpdateVersion} baixado. Reinicie para concluir a atualização.";
-                installNow.Visibility = Visibility.Collapsed;
-                restartNow.Visibility = Visibility.Visible;
-                return;
-            }
+                UpdateStage.Checking => "Verificando…",
+                UpdateStage.Downloading => $"Baixando… {state.Fraction:P0}",
+                UpdateStage.Ready => "Instalar",
+                UpdateStage.Installing => "Instalando…",
+                UpdateStage.Failed => "Tentar novamente",
+                _ => "Buscar atualizações"
+            };
 
-            restartNow.Visibility = Visibility.Collapsed;
-
-            if (last is null)
-            {
-                updateStatus.Text = "Ainda não verificado nesta sessão.";
-                installNow.Visibility = Visibility.Collapsed;
-            }
-            else
-            {
-                var when = last.CheckedAtUtc.ToLocalTime().ToString("dd/MM 'às' HH:mm");
-                updateStatus.Text = UpdateService.Describe(last) + $" (verificado em {when})";
-                installNow.Visibility = last.HasUpdate ? Visibility.Visible : Visibility.Collapsed;
-            }
-
-            // "o que muda": vem do notes do canal (que o release preenche com a seção do PATCHLOG)
-            var novidades = last is not null && last.HasUpdate && !string.IsNullOrWhiteSpace(last.Notes)
-                ? last.Notes.Trim()
+            var notas = UpdateService.LastCheck is { HasUpdate: true } check &&
+                        !string.IsNullOrWhiteSpace(check.Notes)
+                ? check.Notes!.Trim()
                 : null;
 
-            if (novidades is not null)
+            if (notas is not null)
             {
-                updateNotesText.Text = $"O que muda na v{last!.LatestVersion}\n\n{novidades}";
+                updateNotesText.Text = $"O que muda na v{UpdateService.LastCheck!.LatestVersion}\n\n{notas}";
                 updateNotes.Visibility = Visibility.Visible;
             }
             else
@@ -1946,98 +2126,27 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        async void RunUpdateCheck()
+        void StartUpdateFlow() => _ = UpdateFlow.StartAsync();
+
+        // A página é reconstruída a cada navegação: solta o handler da montagem anterior antes de
+        // assinar de novo — senão a tela antiga continuaria sendo atualizada (e a nova, não).
+        if (_updateFlowHandler is not null) UpdateFlow.Changed -= _updateFlowHandler;
+        _updateFlowHandler = RenderUpdate;
+        UpdateFlow.Changed += _updateFlowHandler;
+
+        checkNow.Click += (_, _) =>
         {
-            if (!checkNow.IsEnabled) return;   // já existe uma verificação em andamento
-            checkNow.IsEnabled = false;
-            installNow.Visibility = Visibility.Collapsed;
-            updateBar.IsIndeterminate = true;
-            updateBar.Visibility = Visibility.Visible;
-            updateStatus.Text = "Consultando o canal de atualização…";
-            try
+            // Botão único (UPD-001 revisado): "Instalar" só age com pacote baixado E conferido.
+            if (UpdateFlow.Current.CanInstall)
             {
-                var result = await UpdateService.CheckAsync();
-                UpdateService.LastCheck = result;
-                App.Settings.LastUpdateCheckUtc = result.CheckedAtUtc.ToString("o");
-                SettingsService.Save();
-            }
-            catch (Exception ex)
-            {
-                AppPaths.Log("update check (UI): " + ex);
-                updateStatus.Text = "Falha ao verificar: " + ex.Message;
-            }
-            finally
-            {
-                updateBar.IsIndeterminate = false;
-                updateBar.Visibility = Visibility.Collapsed;
-                checkNow.IsEnabled = true;
-                RefreshUpdateState();
-            }
-        }
-        _runUpdateCheck = RunUpdateCheck;
-
-        checkNow.Click += (_, _) => RunUpdateCheck();
-
-        installNow.Click += async (_, _) =>
-        {
-            var last = UpdateService.LastCheck;
-            if (last is null || !last.HasUpdate) return;
-
-            checkNow.IsEnabled = false;
-            installNow.IsEnabled = false;
-            updateBar.IsIndeterminate = false;
-            updateBar.Value = 0;
-            updateBar.Visibility = Visibility.Visible;
-
-            var progress = new Progress<double>(p =>
-            {
-                updateBar.Value = p * 100;
-                updateStatus.Text = p < 0.88
-                    ? $"Baixando a versão {last.LatestVersion}… {p:P0}"
-                    : $"Conferindo e extraindo… {p:P0}";
-            });
-
-            try
-            {
-                await UpdateService.DownloadAsync(last, progress);
-                updateStatus.Text = $"Versão {last.LatestVersion} baixada. Clique em \"Reiniciar e atualizar\".";
-                AppPaths.Log($"update: {last.LatestVersion} baixada pelo botão");
-            }
-            catch (Exception ex)
-            {
-                AppPaths.Log("update download (UI): " + ex);
-                updateStatus.Text = "Não foi possível baixar: " + ex.Message;
-            }
-            finally
-            {
-                updateBar.Visibility = Visibility.Collapsed;
-                installNow.IsEnabled = true;
-                checkNow.IsEnabled = true;
-                RefreshUpdateState();
-            }
-        };
-
-        restartNow.Click += (_, _) =>
-        {
-            var dir = UpdateService.PendingPayloadDir();
-            if (dir is null)
-            {
-                updateStatus.Text = "O pacote baixado não está mais disponível. Procure novamente.";
-                RefreshUpdateState();
+                UpdateFlow.InstallAndRestart(out _);
+                RenderUpdate(UpdateFlow.Current);
                 return;
             }
-
-            restartNow.IsEnabled = false;
-            if (!UpdateService.ApplyAndRestart(dir, out var error))
-            {
-                updateStatus.Text = error;
-                restartNow.IsEnabled = true;
-                return;
-            }
-
-            updateStatus.Text = "Reiniciando para aplicar a atualização…";
-            App.ExitForUpdate();
+            StartUpdateFlow();
         };
+
+        _runUpdateCheck = StartUpdateFlow;
 
         var autoCheckToggle = new ToggleSwitch
         {
@@ -2058,10 +2167,13 @@ public sealed partial class MainWindow : Window
         updatePanel.Children.Add(updateStatus);
         updatePanel.Children.Add(updateNotes);
         updatePanel.Children.Add(autoCheckToggle);
-        updatePanel.Children.Add(Muted("Canal: " + UpdateService.FeedUrl));
+        updatePanel.Children.Add(Muted("Canais: " +
+            string.Join(" → ", UpdateService.Channels().Select(c => c.Name)) +
+            " (o primeiro que responder vale). Configuráveis em config.local.json: " +
+            UpdateService.GitHubRepoKey + " / " + UpdateService.GitLabRepoKey + "."));
         updatePanel.Children.Add(Muted("A troca de versão fecha o app, substitui a pasta do programa e abre de novo. Se a versão nova não abrir, a anterior volta sozinha."));
         AddBlock("Atualizações", updatePanel);
-        RefreshUpdateState();
+        RenderUpdate(UpdateFlow.SyncFromDisk());
 
         // SIG-001: assinatura local das ferramentas (satisfaz a política de execução do PowerShell)
         var assinaturaPanel = new StackPanel { Spacing = 8 };

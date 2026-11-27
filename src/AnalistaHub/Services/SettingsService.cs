@@ -11,6 +11,11 @@ public sealed class AppSettings
     public bool StartWithWindows { get; set; } = false;
     /// <summary>Escuro | Claro | Sistema</summary>
     public string Theme { get; set; } = "Escuro";
+    /// <summary>
+    /// MKT-004: tamanho global dos ícones das ferramentas (1.0 = padrão). Pequeno 0,8 · Médio 1,0 ·
+    /// Grande 1,3. Aplicado em todas as telas por <c>ToolIcons.Create</c>.
+    /// </summary>
+    public double IconScale { get; set; } = 1.0;
     /// <summary>Pasta extra de manifestos. Vazio = %LOCALAPPDATA%\AnalistaHub\tools.</summary>
     public string ToolsFolder { get; set; } = "";
     public int ToastSeconds { get; set; } = 12;
@@ -75,6 +80,11 @@ public sealed class AppSettings
     public string NotifiedUpdateVersion { get; set; } = "";
     /// <summary>Versão baixada e extraída, esperando reinício para trocar a pasta.</summary>
     public string PendingUpdateVersion { get; set; } = "";
+    /// <summary>
+    /// UPD-003: última versão cujo "o que mudou" resumido já foi mostrado automaticamente.
+    /// Igual à versão em execução = não abre de novo (decisão: só no 1º início após atualizar).
+    /// </summary>
+    public string PublicChangelogSeenVersion { get; set; } = "";
 }
 
 public static class AppPaths

@@ -1,7 +1,9 @@
 using AnalistaHub.Models;
 using AnalistaHub.Services;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Windows.Foundation;
 
 namespace AnalistaHub.Views;
@@ -16,6 +18,11 @@ public sealed partial class ToastHud : Window
     private int _secondsLeft;
     private bool _pinned;
     private string _value = "";
+
+    // UPD-001: quando o cartão é o aviso de atualização, os botões são do fluxo (Baixar/Instalar),
+    // não os de resultado (Copiar/Manter aberto).
+    private bool _updateMode;
+    private Action? _updateAction;
 
     public ToastHud()
     {
@@ -39,8 +46,28 @@ public sealed partial class ToastHud : Window
 
         // CFG-003: "Consultando …" usa o ícone de sincronismo, não o de sucesso nem o de alerta.
         HeaderIcon.Glyph = progress ? "\uE895" : ok ? "\uE73E" : "\uE7BA";
+        // MKT-004: ferramenta que dispensa título no card (o próprio valor já diz o que é)
         HeaderText.Text = tool?.Name ?? "Analista Hub";
-        ValueText.Text = value;
+        HeaderText.Visibility = tool?.Output.HideTitle == true ? Visibility.Collapsed : Visibility.Visible;
+
+        // MKT-004: sufixo do valor (o "1" somado ao SN) em cor de destaque
+        var sufixo = tool?.Output.HighlightSuffix;
+        ValueText.Inlines.Clear();
+        if (!string.IsNullOrEmpty(sufixo) && value.Length > sufixo!.Length &&
+            value.EndsWith(sufixo, StringComparison.Ordinal))
+        {
+            ValueText.Inlines.Add(new Run { Text = value[..^sufixo.Length] });
+            ValueText.Inlines.Add(new Run
+            {
+                Text = sufixo,
+                Foreground = new SolidColorBrush(UiKit.Suffix)
+            });
+        }
+        else
+        {
+            ValueText.Inlines.Add(new Run { Text = value });
+        }
+
         ValueText.FontSize = value.Length > 28 ? 19 : 26;
         SubtitleText.Text = subtitle;
         SubtitleText.Visibility = string.IsNullOrWhiteSpace(subtitle) ? Visibility.Collapsed : Visibility.Visible;
@@ -56,7 +83,19 @@ public sealed partial class ToastHud : Window
             _ => "somente aviso"
         };
         ContextText.Text = string.IsNullOrWhiteSpace(context) ? modeLabel : $"{context} · {modeLabel}";
-        PinButton.Visibility = Visibility.Visible;
+
+        // cartão de resultado: garante que os controles do fluxo de atualização saiam de cena
+        _updateMode = false;
+        _updateAction = null;
+        UpdateButton.Visibility = Visibility.Collapsed;
+        UpdateRing.IsActive = false;
+        UpdateRing.Visibility = Visibility.Collapsed;
+
+        // MKT-004 + decisão 5: "Copiar"/"Manter aberto" só quando há valor de consulta para copiar.
+        // "SEM SN" (modo somente aviso) e cartões de erro não oferecem cópia.
+        var copiavel = tool is null || mode is "clipboard" or "type";
+        CopyButton.Visibility = copiavel ? Visibility.Visible : Visibility.Collapsed;
+        PinButton.Visibility = copiavel ? Visibility.Visible : Visibility.Collapsed;
 
         AppWindow.Show();
         Activate();
@@ -65,6 +104,58 @@ public sealed partial class ToastHud : Window
 
         StartTimer(_secondsLeft);
     }
+
+    /// <summary>
+    /// Aviso de nova versão com ação (UPD-001): o botão é o MESMO fluxo de Configurações →
+    /// Atualizações (<see cref="Services.UpdateFlow"/>). Fica fixo até o usuário decidir.
+    /// </summary>
+    public void PresentUpdate(string version, string subtitle, Action onClick)
+    {
+        _value = "";
+        _pinned = true;
+        _updateMode = true;
+        _updateAction = onClick;
+        HeaderIcon.Glyph = "\uE895";
+        HeaderText.Text = "Atualização";
+        ValueText.Text = $"Analista Hub v{version}";
+        ValueText.FontSize = 22;
+        SubtitleText.Text = subtitle;
+        SubtitleText.Visibility = string.IsNullOrWhiteSpace(subtitle) ? Visibility.Collapsed : Visibility.Visible;
+        PingText.Visibility = Visibility.Collapsed;
+        ContextText.Text = "Configurações → Atualizações para ver os detalhes";
+        TimerText.Text = "fixo — feche quando quiser";
+
+        CopyButton.Visibility = Visibility.Collapsed;
+        PinButton.Visibility = Visibility.Collapsed;
+        UpdateButton.Content = "Baixar";
+        UpdateButton.IsEnabled = true;
+        UpdateButton.Visibility = Visibility.Visible;
+        UpdateRing.IsActive = false;
+        UpdateRing.Visibility = Visibility.Collapsed;
+
+        StopTimer();
+        AppWindow.Show();
+        Activate();
+        ResizeToContent();
+        UiKit.PlaceNearCursor(this, WidthDip, _heightDip);
+    }
+
+    /// <summary>Reflete o estado do fluxo no cartão de atualização (rótulo, spinner, legenda).</summary>
+    public void SetUpdateState(bool busy, string buttonLabel, string? subtitle)
+    {
+        if (!_updateMode) return;
+        UpdateRing.IsActive = busy;
+        UpdateRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        UpdateButton.IsEnabled = !busy;
+        UpdateButton.Content = buttonLabel;
+        if (subtitle is not null)
+        {
+            SubtitleText.Text = subtitle;
+            SubtitleText.Visibility = string.IsNullOrWhiteSpace(subtitle) ? Visibility.Collapsed : Visibility.Visible;
+        }
+    }
+
+    private void OnUpdateClick(object sender, RoutedEventArgs e) => _updateAction?.Invoke();
 
     private void ResizeToContent()
     {
@@ -77,6 +168,7 @@ public sealed partial class ToastHud : Window
         AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(
             AppWindow.Position.X, AppWindow.Position.Y,
             (int)Math.Round(WidthDip * scale), (int)Math.Round(_heightDip * scale)));
+        UiKit.TrimFrame(this);   // UI-005: recorta a moldura clara em volta do aviso
     }
 
     private void StartTimer(int seconds)
@@ -156,6 +248,32 @@ public static class ToastController
     {
         _toast ??= new ToastHud();
         _toast.Present(null, value, subtitle, "notify", true, context: "", seconds: SettingsService.Current.ToastSeconds);
+    }
+
+    /// <summary>
+    /// Aviso de versão nova com ação (UPD-001): o botão dispara o MESMO <see cref="UpdateFlow"/> da
+    /// tela de Configurações — notificação e tela nunca mostram estados diferentes.
+    /// </summary>
+    public static void ShowUpdate(string version, Action onClick)
+    {
+        _toast ??= new ToastHud();
+        _toast.PresentUpdate(version, "Uma versão nova está disponível.", onClick);
+    }
+
+    /// <summary>Espelha o estado do fluxo no cartão de atualização (rótulo, spinner, legenda).</summary>
+    public static void ReflectUpdate(UpdateState state)
+    {
+        if (_toast is null) return;
+        var label = state.Stage switch
+        {
+            UpdateStage.Checking => "Verificando…",
+            UpdateStage.Downloading => $"Baixando… {state.Fraction:P0}",
+            UpdateStage.Ready => "Instalar e reiniciar",
+            UpdateStage.Installing => "Instalando…",
+            UpdateStage.Failed => "Tentar novamente",
+            _ => "Baixar"
+        };
+        _toast.SetUpdateState(state.Busy, label, state.Message);
     }
 
     /// <summary>

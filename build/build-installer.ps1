@@ -14,6 +14,8 @@ param(
     [string]$Out = 'dist\setup',
     # Manifesto do canal consultado em tempo de instalação (padrão: release mais recente do GitHub)
     [string]$ChannelUrl = '',
+    # Manifesto do canal de fallback (padrão: espelho no GitLab) — UPD-002
+    [string]$ChannelFallbackUrl = '',
     # Quando informados, o instalador não consulta o canal: usa estes valores (CI e testes)
     [string]$AssetUrl = '',
     [string]$Sha256 = '',
@@ -81,6 +83,7 @@ $defines = @(
     "/DASSET_SIZE=$Size"
 )
 if ($ChannelUrl) { $defines += "/DCHANNEL=$ChannelUrl" }
+if ($ChannelFallbackUrl) { $defines += "/DCHANNEL_FALLBACK=$ChannelFallbackUrl" }
 
 Write-Host "== compilando o instalador $version"
 Push-Location $srcDir

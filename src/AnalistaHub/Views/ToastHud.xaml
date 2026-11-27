@@ -55,6 +55,11 @@
                            Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                <!-- UPD-001: ação do fluxo de atualização (Baixar → Instalar e reiniciar) -->
+                <ProgressRing x:Name="UpdateRing" IsActive="False" Width="16" Height="16"
+                              VerticalAlignment="Center" Visibility="Collapsed" />
+                <Button x:Name="UpdateButton" Content="Baixar" Click="OnUpdateClick" FontSize="12"
+                        Padding="12,4" Visibility="Collapsed" />
                 <Button x:Name="CopyButton" Content="Copiar" Click="OnCopyClick" FontSize="12" Padding="10,4" />
                 <Button x:Name="PinButton" Content="Manter aberto" Click="OnPinClick" FontSize="12" Padding="10,4" />
             </StackPanel>

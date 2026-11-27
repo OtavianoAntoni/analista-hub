@@ -64,17 +64,9 @@
         <!-- faixa de erro -->
         <Border x:Name="ErrorBanner" Grid.Row="3" Margin="14,0,14,8" Padding="14,10" CornerRadius="8"
                 Background="#33FF5C5C" Visibility="Collapsed">
-            <StackPanel Spacing="8">
-                <TextBlock x:Name="ErrorText" TextWrapping="Wrap" FontSize="13" IsTextSelectionEnabled="True" />
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button x:Name="RetryButton" Content="Tentar de novo" Click="OnRetryClick" />
-                    <Button x:Name="ProbeButton" Content="Verificar conexão" Click="OnProbeClick"
-                            Visibility="Collapsed" />
-                    <Button x:Name="CopyDetailButton" Content="Copiar detalhe" Click="OnCopyDetailClick" />
-                    <Button x:Name="CloseButton" Content="Fechar" Click="OnCloseErrorClick"
-                            Visibility="Collapsed" />
-                </StackPanel>
-            </StackPanel>
+            <!-- SQ-006: estado de erro na busca rápida não tem botão nenhum — só o texto.
+                 Dismiss é o padrão da HUD: Esc, clique fora ou a própria nova consulta. -->
+            <TextBlock x:Name="ErrorText" TextWrapping="Wrap" FontSize="13" IsTextSelectionEnabled="True" />
         </Border>
 
         <!-- rodapé -->

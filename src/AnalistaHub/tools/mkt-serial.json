@@ -1,10 +1,10 @@
 {
   "id": "mkt-serial",
-  "name": "SN da RB pelo IP",
+  "name": "Consulta SN",
   "category": "MikroTik",
-  "description": "Consulta o serial (SN) de uma RB no inventário e devolve SN+1.",
-  "longDescription": "Lê o IP de uma RB MikroTik (digitado ou copiado para a área de transferência), autentica no inventário e devolve o serial cadastrado com o sufixo \"1\". Se o IP não estiver no inventário, devolve 0 — e 0 é resposta, não erro. Falha de rede, login ou servidor nunca vira 0: nesse caso o valor anterior da área de transferência é preservado e o motivo aparece na tela.",
-  "icon": "\uE968",
+  "description": "Consulta o Serial Number da RB no inventário e devolve SN+1.",
+  "longDescription": "Lê o IP de uma RB MikroTik (digitado ou copiado para a área de transferência), autentica no inventário e devolve o serial cadastrado com o sufixo \"1\".",
+  "icon": "material:router",
   "script": "mkt_serial.ps1",
   "interpreter": "powershell",
   "modeArgs": [ "-Mode", "hub" ],
@@ -27,6 +27,8 @@
     "allowed": [ "clipboard", "type", "notify" ],
     "valueLabel": "serial da RB com o sufixo \"1\"",
     "successLabel": "0 significa: IP não cadastrado no inventário.",
+    "hideTitle": true,
+    "highlightSuffix": "1",
     "zeroValue": {
       "title": "SEM SN",
       "note": "Não registrado"

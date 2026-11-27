@@ -45,6 +45,11 @@ problema de catálogo, não de digitação.
 ## R3 — Ferramenta nova: checklist obrigatório
 
 1. Manifesto `.json` em `src/AnalistaHub/tools/` (ou em `%LOCALAPPDATA%\AnalistaHub\tools\`).
+   Depois de editar, **`Sincronizar tools.cmd`** (duplo clique) leva o arquivo para
+   `dist\AnalistaHub\tools` nos dois sentidos, roda o gate `--check-tools` e reabre o HUB — editar
+   só uma das pastas não aparece na tela (se foi `src`) nem sobrevive à próxima publicação
+   (se foi `dist`). Script `.ps1` só anda `src → dist`: a cópia publicada leva a assinatura desta
+   máquina e o HUB reassina quando o conteúdo muda.
 2. `id`, `name`, `description` preenchidos e **ou** `script` (ferramenta que executa
    programa) **ou** `kind: "dataset"` + `dataset` (ferramenta que consulta uma base local, sem
    processo e sem rede — o painel é próprio, ver `docs/FERRAMENTA-CONSULTA-SSE.md`).
@@ -137,9 +142,20 @@ Cada ferramenta tem ícone próprio, e trocá-lo não exige código:
 
 | Forma | Campo `icon` no manifesto | Precisa de arquivo? |
 |---|---|---|
-| Glifo do sistema | `"\uE968"` (Segoe MDL2 Assets) | não |
+| Ícone do Google (padrão) | `"material:router"` — nome na fonte **Material Icons** | não (fonte vai no pacote) |
+| Glifo do sistema (legado) | `"\uE968"` (Segoe MDL2 Assets) | não |
 | Imagem da ferramenta | `"nome.ico"` ou `"nome.png"` | sim, **ao lado do manifesto** |
 
+- **Fonte dos ícones**: `Assets/Fonts/MaterialIcons-Regular.ttf` (Google Material Icons, Apache 2.0),
+  com o mapa nome→codepoint em `Assets/Fonts/MaterialIcons-Regular.codepoints` e a licença em
+  `Assets/Fonts/LICENSE-MaterialIcons.txt`. Os três arquivos são `Content` do `.csproj`, então viajam
+  no `dist`, no `.zip` do release e no instalador: atualização e instalação nova recebem o mesmo
+  conjunto de ícones, sem depender de fonte instalada na máquina.
+- O nome tem de existir no `.codepoints` (é a lista oficial do Google). Nome desconhecido ou fonte
+  ausente do pacote ⇒ o ícone cai no glifo genérico e `--check-tools` **falha** dizendo qual nome e
+  qual arquivo faltou.
+- Para usar um ícone novo: procurar o nome no `.codepoints` (ou em fonts.google.com/icons) e escrever
+  `"material:<nome>"`. Nada mais muda — a fonte cobre todo o catálogo.
 - O arquivo mora em `src/AnalistaHub/tools/` (ou na pasta de ferramentas do usuário), nunca por
   caminho absoluto — mesma regra do script (R9).
 - `.ico` com 16, 24, 32, 48 e 256 px (o app desenha entre 18 e 22 px; o Windows usa o resto).

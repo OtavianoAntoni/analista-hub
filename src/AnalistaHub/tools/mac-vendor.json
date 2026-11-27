@@ -1,10 +1,10 @@
 {
   "id": "mac-vendor",
-  "name": "Fabricante pelo MAC",
+  "name": "MACVendor",
   "category": "Rede",
-  "description": "Resolve o fabricante (OUI) de um MAC pela base do api.macvendors.com.",
-  "longDescription": "Recebe um MAC (com ou sem separador) e devolve o fabricante dono do prefixo de 6 dígitos. MACs localmente administrados — os aleatórios de celular e de Wi-Fi privado — não têm fabricante na base e são recusados com explicação, em vez de virarem erro genérico. As consultas ficam em cache local, o que evita o limite de requisições da API.",
-  "icon": "\uE701",
+  "description": "Resolve o fabricante de um MAC pela base do api.macvendors.com.",
+  "longDescription": "Recebe um MAC e devolve o fabricante dono do prefixo. MACs localmente administrados não têm fabricante na base e são recusados. As consultas ficam em cache local, o que evita o limite de requisições da API.",
+  "icon": "material:memory",
   "script": "mac_vendor.ps1",
   "interpreter": "powershell",
   "modeArgs": [

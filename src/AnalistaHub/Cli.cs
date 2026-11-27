@@ -28,6 +28,7 @@ public static class Cli
             or "--set-cred" or "--clear-cred" or "--set-trigger" or "--validate-cred" or "--check-tools"
             or "--try-hotkey" or "--whatsnew" or "--hotkeys" or "--ping" or "--ping-sim"
             or "--check-update" or "--download-update" or "--apply-update"
+            or "--update-channels"
             or "--set-rede-path" or "--sign-tools" or "--validate-rede" or "--import-rede" or "--search-sse";
 
     public static int Run(string[] args, ToolCatalog catalog)
@@ -304,6 +305,22 @@ public static class Cli
                     if (tool.IconIsFile && !tool.IconFileExists)
                         problems.Add(new { id = tool.Id, problema = "ícone não encontrado: " + tool.ExpandedIconFile });
 
+                    // R10 (fonte do Google): "material:nome" só vale se a fonte viajou no pacote e se
+                    // o nome existe no mapa. Erro de digitação não pode virar glifo genérico em
+                    // silêncio — o analista veria a ferramenta com o ícone errado e ninguém saberia.
+                    if (tool.IconIsMaterial)
+                    {
+                        if (!MaterialIcons.Disponivel)
+                            problems.Add(new { id = tool.Id, problema = "ícones Google: " + MaterialIcons.ProblemaDeInstalacao() });
+                        else if (!MaterialIcons.TentarGlifo(tool.IconMaterialName, out _))
+                            problems.Add(new
+                            {
+                                id = tool.Id,
+                                problema = $"ícone Material desconhecido: «{tool.IconMaterialName}» " +
+                                           "(nomes em Assets/Fonts/MaterialIcons-Regular.codepoints)"
+                            });
+                    }
+
                     // R14: "ping" é do campo de IP. Em campo de texto o HUD não teria o que pingar,
                     // e a promessa do manifesto ficaria só no papel.
                     foreach (var campo in tool.Inputs.Where(i => i.Ping &&
@@ -441,6 +458,7 @@ public static class Cli
                 {
                     id = t.Id,
                     nome = t.Name,
+                    icone = t.Icon,
                     tipo = t.IsDataset ? "dataset" : "script",
                     estado = t.IsBroken ? "com problema: " + t.LoadError : "ok",
                     script = t.IsDataset ? null : t.ExpandedScript,
@@ -640,11 +658,22 @@ public static class Cli
                     tamanho = result.Asset?.Size,
                     notas = result.Notes,
                     mensagem = UpdateService.Describe(result),
-                    canal = UpdateService.FeedUrl,
+                    canal = result.Channel ?? UpdateService.FeedUrl,
+                    canal_manifesto = result.ChannelFeed,
                     erro = result.Error
                 }, true));
                 Write(output.ToString());
                 return result.Ok ? 0 : 1;
+            }
+
+            case "--update-channels":
+            {
+                // UPD-002: mostra a cadeia efetiva (primário + fallback) sem tocar na rede.
+                output.AppendLine(Json(UpdateService.Channels()
+                    .Select(c => new { canal = c.Name, manifesto = c.FeedUrl })
+                    .ToList(), true));
+                Write(output.ToString());
+                return 0;
             }
 
             case "--download-update":

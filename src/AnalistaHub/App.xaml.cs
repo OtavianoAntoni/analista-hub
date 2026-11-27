@@ -130,6 +130,9 @@ public partial class App : Application
         MainWin = new MainWindow();
         MainWin.Activate();
 
+        // UPD-003: no 1º início após atualizar, "O que mudou" abre sozinho (texto resumido).
+        SchedulePublicWhatsNew();
+
         if (cliArgs.Contains("--preview-toast"))
         {
             // usado só em teste: mostra um aviso de exemplo sem consultar nada
@@ -268,6 +271,48 @@ public partial class App : Application
             });
         }
 
+        // UX-002: dispara o MESMO atalho N vezes, escondendo a HUD entre as invocações — é o repro
+        // "a partir da segunda vez é preciso Enter". Prova a matriz 2ª/3ª/10ª sem teclado sintético.
+        var repeatIdx = Array.IndexOf(cliArgs, "--tool-hotkey-repeat");
+        if (repeatIdx >= 0 && repeatIdx + 2 < cliArgs.Length &&
+            int.TryParse(cliArgs[repeatIdx + 2], out var repeticoes) && repeticoes > 0)
+        {
+            var alvoRepetido = cliArgs[repeatIdx + 1];
+            for (var i = 1; i <= repeticoes; i++)
+            {
+                var ciclo = i;
+                After(1200 + ciclo * 900, () =>
+                {
+                    AppPaths.Log($"diagnóstico: atalho repetido {ciclo}/{repeticoes} «{alvoRepetido}»");
+                    SimulateToolHotkey(alvoRepetido);
+                });
+                After(1200 + ciclo * 900 + 500, () => Views.HudController.HideAll());
+            }
+        }
+
+        // HOME-001: diagnóstico do card da página Início (campo + Buscar), sem clique sintético.
+        var homeIdx = Array.IndexOf(cliArgs, "--home-buscar");
+        if (homeIdx >= 0 && homeIdx + 2 < cliArgs.Length)
+        {
+            var alvoHome = cliArgs[homeIdx + 1];
+            var valorHome = cliArgs[homeIdx + 2];
+            After(1200, () =>
+            {
+                MainWin.NavigateTo("home");
+                After(400, () => MainWin.HomeBuscar(alvoHome, valorHome));
+            });
+        }
+
+        // UPD-001 revisado: abre Configurações e roda o fluxo de atualização pelo MESMO caminho do
+        // botão/bandeja (CheckUpdatesNow → UpdateFlow). Serve para provar os estados sem clique.
+        if (cliArgs.Contains("--update-flow"))
+            After(900, () => MainWin.CheckUpdatesNow());   // cedo o bastante para --scroll-y (1500) rolar depois
+
+        // UPD-001: prova a instalação de ponta a ponta (baixar → conferir → instalar → reiniciar) sem
+        // clique no botão. Usa o MESMO UpdateFlow da tela e do aviso.
+        if (cliArgs.Contains("--update-install"))
+            After(1500, () => _ = InstalarAtualizacaoAsync());
+
         if (cliArgs.Contains("--validate-once"))
         {
             var validateTimer = MainWin.DispatcherQueue.CreateTimer();
@@ -293,6 +338,53 @@ public partial class App : Application
 
         StartShowSignalWatcher();
         StartUpdateCheck();
+    }
+
+    /// <summary>
+    /// Diagnóstico (`--update-install`): roda o fluxo completo e, com o pacote pronto e conferido,
+    /// agenda a instalação e sai — o script de troca reabre o app. É o caminho do botão "Instalar".
+    /// </summary>
+    private static async Task InstalarAtualizacaoAsync()
+    {
+        try
+        {
+            AppPaths.Log("update-install: iniciando fluxo completo");
+            await UpdateFlow.StartAsync();
+            var estado = UpdateFlow.Current;
+            if (!estado.CanInstall)
+            {
+                AppPaths.Log($"update-install: sem pacote pronto — {estado.Stage}: {estado.Message}");
+                return;
+            }
+
+            if (!UpdateFlow.InstallAndRestart(out var erro))
+                AppPaths.Log("update-install: falhou — " + erro);
+        }
+        catch (Exception ex) { AppPaths.Log("update-install: " + ex); }
+    }
+
+    /// <summary>
+    /// UPD-003: "O que mudou" abre sozinho, uma vez por versão — só no primeiro início após a
+    /// atualização (decisão registrada). O texto vem do CHANGELOG_PUBLIC.md que acompanha o pacote.
+    /// </summary>
+    private static void SchedulePublicWhatsNew()
+    {
+        if (MainWin is null) return;
+
+        var versaoAtual = UpdateService.Normalize(UpdateService.CurrentVersion);
+        if (string.Equals(Settings.PublicChangelogSeenVersion, versaoAtual, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var timer = MainWin.DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(2.5);   // a janela precisa assentar antes de abrir diálogo
+        timer.IsRepeating = false;
+        timer.Tick += (_, _) =>
+        {
+            try { MainWin?.ShowPublicWhatsNew(); }
+            catch (Exception ex) { AppPaths.Log("whatsNew automático: " + ex.Message); }
+        };
+        timer.Start();
+        DiagnosticTimers.Add(timer);   // referência forte: timer local pode ser recolhido antes do Tick
     }
 
     /// <summary>
@@ -325,6 +417,9 @@ public partial class App : Application
 
             if (!Settings.AutoCheckUpdates || !UpdateService.CheckDue(TimeSpan.FromHours(24))) return;
 
+            // UPD-001: o aviso de atualização espelha o MESMO fluxo da tela de Configurações.
+            UpdateFlow.Changed += Views.ToastController.ReflectUpdate;
+
             _ = Task.Run(async () =>
             {
                 var result = await UpdateService.CheckAsync();
@@ -345,9 +440,13 @@ public partial class App : Application
                 {
                     try
                     {
-                        Views.ToastController.ShowMessage("Atualização disponível",
-                            $"Analista Hub v{version} disponível",
-                            "Configurações → Atualizações para instalar");
+                        // UPD-001 (decisão A): a notificação carrega o fluxo, igual à tela de
+                        // Configurações — Baixar → progresso → Instalar e reiniciar.
+                        Views.ToastController.ShowUpdate(version, () =>
+                        {
+                            if (UpdateFlow.Current.CanInstall) UpdateFlow.InstallAndRestart(out _);
+                            else _ = UpdateFlow.StartAsync();
+                        });
                     }
                     catch (Exception ex) { AppPaths.Log("aviso de atualização: " + ex.Message); }
                 });
@@ -721,7 +820,7 @@ public partial class App : Application
     public static bool ApplyToolHotkey(string toolId, string combo, out string error)
     {
         error = "";
-        if (Hotkey is null) { error = "Atalho global não inicializado."; return false; }
+        if (Hotkey is null) { error = "Atalho de ativação não inicializado."; return false; }
 
         combo = (combo ?? "").Trim();
 
@@ -758,7 +857,7 @@ public partial class App : Application
     public static bool ApplyHotkey(string combo, out string error)
     {
         error = "";
-        if (Hotkey is null) { error = "Atalho global não inicializado."; return false; }
+        if (Hotkey is null) { error = "Atalho de ativação não inicializado."; return false; }
 
         var ok = Hotkey.Register(combo, out error);
         if (!ok) return false;

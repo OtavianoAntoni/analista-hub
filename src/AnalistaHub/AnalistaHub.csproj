@@ -24,7 +24,7 @@
     <EnableMsixTooling>false</EnableMsixTooling>
     <PublishReadyToRun>false</PublishReadyToRun>
     <WindowsSdkPackageVersion>10.0.19041.57</WindowsSdkPackageVersion>
-    <Version>2.3.0</Version>
+    <Version>2.4.0</Version>
     <Company>Analista Hub</Company>
     <Product>Analista Hub</Product>
   </PropertyGroup>
@@ -55,6 +55,18 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Assets\app.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Ícones do Google (Material Icons, Apache 2.0) — fonte + mapa nome→codepoint + licença.
+         Vão no pacote (dist → zip → instalador/atualização): sem eles "material:nome" cai no
+         glifo do sistema. Ver R10 em docs/REGRAS-DE-FERRAMENTA.md. -->
+    <Content Include="Assets\Fonts\MaterialIcons-Regular.ttf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\Fonts\MaterialIcons-Regular.codepoints">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\Fonts\LICENSE-MaterialIcons.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

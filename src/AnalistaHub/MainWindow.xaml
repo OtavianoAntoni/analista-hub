@@ -6,7 +6,7 @@
 
     <Grid x:Name="RootGrid" Background="{ThemeResource HubPageBackground}">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="272" />
+            <ColumnDefinition Width="280" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
